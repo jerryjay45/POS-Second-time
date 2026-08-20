@@ -1,12 +1,37 @@
 """
 core/db_checkout.py
-Checkout database — receipts, line items, refund/void records.
+Checkout database — receipts, line items, void/refund/exchange records.
 
 Tables
 ------
 receipts      — one row per completed transaction
-receipt_items — line items per receipt
-refunds       — void / partial-refund records linked to a receipt
+receipt_items — line items per receipt (snapshot of what was sold: name,
+                barcode, price — doesn't change even if the product is later
+                renamed or deleted in products.db)
+refunds       — one row per void / full / partial refund / exchange action
+                taken against a receipt
+refund_items  — item-level detail for a refund action. Each row is tied to
+                the exact receipt_items row it affects via receipt_item_id
+                (a real, DB-enforced FK — receipt_items lives in this same
+                file, unlike product_id/user_id elsewhere which cross files).
+
+Reconciliation
+--------------
+Every refund_items row links to a specific receipt_items row and records
+how many units of that line are being refunded. Before inserting, the
+cumulative quantity already refunded against that line (across all past
+refund actions) plus the new request is checked against the line's original
+quantity — this is what prevents refunding the same units twice, which was
+the core issue with the previous design (refund_items had no link back to
+what was actually sold).
+
+Soft (undeclared, cross-file) references — documented, not DB-enforced:
+  receipts.user_id, receipts.session_id -> users.db
+  receipt_items.product_id              -> products.db
+  refunds.user_id                       -> users.db
+  refund_items.exchange_for_product_id  -> products.db
+These rely on the UI only ever offering valid IDs (search/dropdown-driven
+selection), per the agreed lightweight approach for cross-file references.
 """
 
 import sqlite3
@@ -36,9 +61,9 @@ def _conn():
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    receipt_number  TEXT    NOT NULL UNIQUE,   -- e.g. "#0041"
-    user_id         INTEGER NOT NULL,          -- cashier
-    session_id      INTEGER NOT NULL,
+    receipt_number  TEXT    NOT NULL UNIQUE,   -- e.g. "T01-0041"
+    user_id         INTEGER NOT NULL,          -- cashier — soft ref, users.db
+    session_id      INTEGER NOT NULL,          -- soft ref, users.db
     subtotal        REAL    NOT NULL DEFAULT 0.0,
     gct_amount      REAL    NOT NULL DEFAULT 0.0,
     discount_amount REAL    NOT NULL DEFAULT 0.0,
@@ -56,7 +81,7 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE TABLE IF NOT EXISTS receipt_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_id      INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
-    product_id      INTEGER NOT NULL,
+    product_id      INTEGER NOT NULL,   -- soft ref, products.db
     barcode         TEXT    NOT NULL,
     product_name    TEXT    NOT NULL,
     quantity        INTEGER NOT NULL DEFAULT 1,
@@ -69,31 +94,33 @@ CREATE TABLE IF NOT EXISTS receipt_items (
 CREATE TABLE IF NOT EXISTS refunds (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_id      INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
-    user_id         INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,   -- soft ref, users.db — who authorised it
     refund_type     TEXT    NOT NULL CHECK(refund_type IN ('void','partial','full','exchange')),
     reason          TEXT    NOT NULL DEFAULT '',
-    amount          REAL    NOT NULL DEFAULT 0.0,
+    amount          REAL    NOT NULL DEFAULT 0.0,  -- computed from refund_items, not caller-supplied
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS refund_items (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    refund_id               INTEGER NOT NULL REFERENCES refunds(id) ON DELETE CASCADE,
-    product_id              INTEGER,
-    product_name            TEXT    NOT NULL DEFAULT '',
-    qty                     INTEGER NOT NULL DEFAULT 1,
-    unit_price              REAL    NOT NULL DEFAULT 0.0,
-    exchange_for_name       TEXT    NOT NULL DEFAULT '',
-    exchange_for_product_id INTEGER
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    refund_id                INTEGER NOT NULL REFERENCES refunds(id)       ON DELETE CASCADE,
+    receipt_item_id          INTEGER NOT NULL REFERENCES receipt_items(id) ON DELETE CASCADE,
+    quantity                 INTEGER NOT NULL CHECK(quantity > 0),
+    line_amount              REAL    NOT NULL DEFAULT 0.0,  -- proportional line_total for this quantity
+    -- Exchange-only: what it was swapped for (a NEW product, not on the
+    -- original receipt, so no receipt_item_id available for this side)
+    exchange_for_name        TEXT    DEFAULT NULL,
+    exchange_for_product_id  INTEGER DEFAULT NULL  -- soft ref, products.db
 );
-CREATE INDEX IF NOT EXISTS idx_refund_items_refund ON refund_items(refund_id);
 
-CREATE INDEX IF NOT EXISTS idx_receipts_number   ON receipts(receipt_number);
-CREATE INDEX IF NOT EXISTS idx_receipts_user     ON receipts(user_id);
-CREATE INDEX IF NOT EXISTS idx_receipts_session  ON receipts(session_id);
-CREATE INDEX IF NOT EXISTS idx_receipts_date     ON receipts(created_at);
-CREATE INDEX IF NOT EXISTS idx_items_receipt     ON receipt_items(receipt_id);
-CREATE INDEX IF NOT EXISTS idx_refunds_receipt   ON refunds(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_number     ON receipts(receipt_number);
+CREATE INDEX IF NOT EXISTS idx_receipts_user       ON receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_session    ON receipts(session_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_date       ON receipts(created_at);
+CREATE INDEX IF NOT EXISTS idx_items_receipt       ON receipt_items(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_refunds_receipt     ON refunds(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_refund_items_refund ON refund_items(refund_id);
+CREATE INDEX IF NOT EXISTS idx_refund_items_ritem  ON refund_items(receipt_item_id);
 """
 
 
@@ -135,7 +162,7 @@ def _next_receipt_number(con) -> str:
 def save_receipt(
     user_id: int,
     session_id: int,
-    items: list[dict],           # list of line-item dicts
+    items: list[dict],
     subtotal: float,
     gct_amount: float,
     discount_amount: float,
@@ -145,9 +172,8 @@ def save_receipt(
     card_amount: float = None,
     change_given: float = None,
 ) -> dict:
-    """
-    Persist a completed transaction. Returns the saved receipt dict including
-    the auto-generated receipt_number.
+    """Persist a completed transaction. Returns the saved receipt dict
+    including the auto-generated receipt_number.
 
     items dicts must contain:
         product_id, barcode, product_name, quantity,
@@ -200,11 +226,9 @@ def get_receipt_by_id(receipt_id: int) -> dict | None:
 def get_receipt_by_number(receipt_number: str) -> dict | None:
     with _conn() as con:
         row = con.execute(
-            "SELECT * FROM receipts WHERE receipt_number = ?", (receipt_number,)
+            "SELECT id FROM receipts WHERE receipt_number = ?", (receipt_number,)
         ).fetchone()
-        if not row:
-            return None
-        return get_receipt_by_id(row["id"])
+        return get_receipt_by_id(row["id"]) if row else None
 
 
 def count_receipts(
@@ -226,14 +250,9 @@ def count_receipts(
 
 
 def get_receipts(
-    user_id: int = None,
-    session_id: int = None,
-    status: str = None,
-    search: str = "",
-    date_from: str = "",
-    date_to: str = "",
-    limit: int = 200,
-    offset: int = 0,
+    user_id: int = None, session_id: int = None, status: str = None,
+    search: str = "", date_from: str = "", date_to: str = "",
+    limit: int = 200, offset: int = 0,
 ) -> list[dict]:
     q = "SELECT * FROM receipts WHERE 1=1"
     params: list = []
@@ -251,7 +270,92 @@ def get_receipts(
         return [dict(r) for r in con.execute(q, params)]
 
 
+def get_session_receipts(session_id: int) -> list[dict]:
+    with _conn() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM receipts WHERE session_id = ? ORDER BY created_at DESC",
+            (session_id,)
+        )]
+
+
+# ── Refund reconciliation core ──────────────────────────────────────────────
+
+def get_refunded_quantity(con, receipt_item_id: int) -> int:
+    """Total quantity already refunded against a specific receipt_items row,
+    across all past void/refund/exchange actions."""
+    row = con.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS q FROM refund_items WHERE receipt_item_id = ?",
+        (receipt_item_id,)
+    ).fetchone()
+    return row["q"]
+
+
+def _validate_and_price_items(con, requested: list[dict]) -> list[dict]:
+    """Validate each {receipt_item_id, quantity, ...} request against what's
+    actually left to refund on that line, and attach a computed line_amount
+    (proportional share of the original line_total).
+
+    Raises ValueError on any invalid request — over-refund, unknown
+    receipt_item_id, or non-positive quantity — so the caller can surface
+    a clear message instead of silently corrupting the totals.
+    """
+    priced = []
+    for req in requested:
+        ri = con.execute(
+            "SELECT * FROM receipt_items WHERE id = ?", (req["receipt_item_id"],)
+        ).fetchone()
+        if not ri:
+            raise ValueError(f"Receipt item {req['receipt_item_id']} not found.")
+
+        qty = req["quantity"]
+        if qty <= 0:
+            raise ValueError(f"Refund quantity for {ri['product_name']} must be positive.")
+
+        already = get_refunded_quantity(con, ri["id"])
+        remaining = ri["quantity"] - already
+        if qty > remaining:
+            raise ValueError(
+                f"Cannot refund {qty} of \"{ri['product_name']}\" — only "
+                f"{remaining} of {ri['quantity']} remain unrefunded."
+            )
+
+        line_amount = round((ri["line_total"] / ri["quantity"]) * qty, 2)
+        priced.append({
+            "receipt_item_id": ri["id"],
+            "quantity": qty,
+            "line_amount": line_amount,
+            "exchange_for_name": req.get("exchange_for_name"),
+            "exchange_for_product_id": req.get("exchange_for_product_id"),
+        })
+    return priced
+
+
+def _insert_refund(con, receipt_id: int, user_id: int, refund_type: str,
+                   reason: str, priced_items: list[dict]) -> int:
+    total = round(sum(it["line_amount"] for it in priced_items), 2)
+    cur = con.execute(
+        """INSERT INTO refunds (receipt_id, user_id, refund_type, reason, amount)
+           VALUES (?,?,?,?,?)""",
+        (receipt_id, user_id, refund_type, reason, total)
+    )
+    refund_id = cur.lastrowid
+    con.executemany(
+        """INSERT INTO refund_items
+           (refund_id, receipt_item_id, quantity, line_amount,
+            exchange_for_name, exchange_for_product_id)
+           VALUES (?,?,?,?,?,?)""",
+        [(refund_id, it["receipt_item_id"], it["quantity"], it["line_amount"],
+          it["exchange_for_name"], it["exchange_for_product_id"])
+         for it in priced_items]
+    )
+    return refund_id
+
+
+# ── Void / Refund / Exchange ────────────────────────────────────────────────
+
 def void_receipt(receipt_id: int, user_id: int, reason: str) -> bool:
+    """Void a completed receipt. Automatically builds item-level refund_items
+    for every line on the receipt (a void cancels the whole sale)."""
     with _conn() as con:
         cur = con.execute(
             "UPDATE receipts SET status='voided' WHERE id=? AND status='completed'",
@@ -259,172 +363,107 @@ def void_receipt(receipt_id: int, user_id: int, reason: str) -> bool:
         )
         if cur.rowcount == 0:
             return False
-        con.execute(
-            "INSERT INTO refunds (receipt_id, user_id, refund_type, reason, amount) "
-            "SELECT id, ?, 'void', ?, total FROM receipts WHERE id=?",
-            (user_id, reason, receipt_id)
-        )
+
+        lines = con.execute(
+            "SELECT id, quantity FROM receipt_items WHERE receipt_id = ?", (receipt_id,)
+        ).fetchall()
+        requested = [{"receipt_item_id": r["id"], "quantity": r["quantity"]} for r in lines]
+        priced = _validate_and_price_items(con, requested)
+        _insert_refund(con, receipt_id, user_id, "void", reason, priced)
+        con.commit()
+        return True
+
+
+def refund_receipt(receipt_id: int, user_id: int, reason: str,
+                   items: list[dict], refund_type: str = "partial") -> bool:
+    """Refund some or all lines of a completed receipt.
+
+    items — list of {receipt_item_id, quantity}. For a full refund, pass
+    every line at its full quantity (or call with refund_type='full' and
+    the same shape). The refund amount is computed from the items, not
+    supplied by the caller.
+
+    Raises ValueError (caught by caller / shown to user) if any requested
+    quantity exceeds what's left unrefunded on that line.
+    """
+    if not items:
+        return False
+    with _conn() as con:
+        row = con.execute(
+            "SELECT id, status FROM receipts WHERE id = ?", (receipt_id,)
+        ).fetchone()
+        if not row or row["status"] not in ("completed", "refunded"):
+            return False
+
+        priced = _validate_and_price_items(con, items)
+        _insert_refund(con, receipt_id, user_id, refund_type, reason, priced)
+
+        # Mark fully refunded only when every line has nothing left
+        remaining_total = con.execute(
+            """SELECT COALESCE(SUM(ri.quantity), 0) AS total_qty
+               FROM receipt_items ri WHERE ri.receipt_id = ?""",
+            (receipt_id,)
+        ).fetchone()["total_qty"]
+        refunded_total = con.execute(
+            """SELECT COALESCE(SUM(rfi.quantity), 0) AS refunded_qty
+               FROM refund_items rfi
+               JOIN receipt_items ri ON ri.id = rfi.receipt_item_id
+               WHERE ri.receipt_id = ?""",
+            (receipt_id,)
+        ).fetchone()["refunded_qty"]
+        if refunded_total >= remaining_total:
+            con.execute("UPDATE receipts SET status='refunded' WHERE id=?", (receipt_id,))
+
+        con.commit()
+        return True
+
+
+def exchange_receipt(receipt_id: int, user_id: int, reason: str,
+                     items: list[dict]) -> bool:
+    """Record an exchange against a completed receipt.
+
+    items — list of {receipt_item_id, quantity, exchange_for_name,
+                      exchange_for_product_id}
+    """
+    if not items:
+        return False
+    with _conn() as con:
+        row = con.execute(
+            "SELECT id FROM receipts WHERE id=? AND status='completed'", (receipt_id,)
+        ).fetchone()
+        if not row:
+            return False
+        priced = _validate_and_price_items(con, items)
+        _insert_refund(con, receipt_id, user_id, "exchange", reason, priced)
         con.commit()
         return True
 
 
 def get_refund_items(refund_id: int) -> list[dict]:
-    """Return all item-level records for a refund/exchange."""
+    """Item-level detail for a refund, joined back to the original receipt line."""
     with _conn() as con:
         return [dict(r) for r in con.execute(
-            "SELECT * FROM refund_items WHERE refund_id = ? ORDER BY id",
+            """SELECT rfi.*, ri.product_name, ri.barcode, ri.unit_price AS original_unit_price,
+                      ri.quantity AS original_quantity
+               FROM refund_items rfi
+               JOIN receipt_items ri ON ri.id = rfi.receipt_item_id
+               WHERE rfi.refund_id = ? ORDER BY rfi.id""",
             (refund_id,)
         )]
 
 
-def refund_receipt(receipt_id: int, user_id: int, reason: str,
-                   amount: float, refund_type: str = "full",
-                   items: list[dict] = None) -> bool:
-    """Refund a receipt, optionally with item-level detail.
-
-    items — list of {product_id, product_name, qty, unit_price}
-            If None, no item records are stored.
-    """
+def get_refunds_for_receipt(receipt_id: int) -> list[dict]:
     with _conn() as con:
-        cur = con.execute(
-            "UPDATE receipts SET status='refunded' WHERE id=? AND status='completed'",
+        return [dict(r) for r in con.execute(
+            "SELECT * FROM refunds WHERE receipt_id = ? ORDER BY id DESC",
             (receipt_id,)
-        )
-        if cur.rowcount == 0:
-            return False
-        ins = con.execute(
-            "INSERT INTO refunds (receipt_id, user_id, refund_type, reason, amount) "
-            "VALUES (?,?,?,?,?)",
-            (receipt_id, user_id, refund_type, reason, amount)
-        )
-        refund_id = ins.lastrowid
-        if items:
-            for it in items:
-                con.execute(
-                    "INSERT INTO refund_items "
-                    "(refund_id, product_id, product_name, qty, unit_price) "
-                    "VALUES (?,?,?,?,?)",
-                    (refund_id, it.get("product_id"), it.get("product_name", ""),
-                     it.get("qty", 1), it.get("unit_price", 0.0))
-                )
-        con.commit()
-        return True
-
-
-# ── Reporting helpers ─────────────────────────────────────────────────────────
-
-def session_totals(session_id: int) -> dict:
-    """Return aggregated sales totals for a session."""
-    with _conn() as con:
-        row = con.execute(
-            """SELECT
-                COUNT(*)                                        AS transaction_count,
-                COALESCE(SUM(CASE WHEN status='completed'
-                              THEN total ELSE 0 END), 0)       AS total_sales,
-                COALESCE(SUM(CASE WHEN status='completed'
-                              THEN gct_amount ELSE 0 END), 0)  AS total_gct,
-                COALESCE(SUM(CASE WHEN status='completed'
-                              THEN discount_amount ELSE 0 END),0) AS total_discount,
-                COUNT(CASE WHEN status='voided'   THEN 1 END)  AS voided_count,
-                COUNT(CASE WHEN status='refunded' THEN 1 END)  AS refunded_count
-               FROM receipts WHERE session_id = ?""",
-            (session_id,)
-        ).fetchone()
-        return dict(row)
-
-
-def session_group_totals(session_id: int) -> list[dict]:
-    """Return sales broken down by product group for a session.
-
-    Joins receipt_items.product_id to the products DB to get group names.
-    Returns list of {group_name, total_sales, item_count} sorted by total desc.
-    """
-    from config import DB_PRODUCTS
-    with _conn() as con:
-        con.execute(f"ATTACH DATABASE ? AS pdb", (DB_PRODUCTS,))
-        try:
-            rows = con.execute(
-                """SELECT
-                       COALESCE(g.name, 'Ungrouped')  AS group_name,
-                       SUM(ri.line_total)              AS total_sales,
-                       SUM(ri.quantity)                AS item_count
-                   FROM receipt_items ri
-                   JOIN receipts r ON r.id = ri.receipt_id
-                   LEFT JOIN pdb.products p ON p.id = ri.product_id
-                   LEFT JOIN pdb.groups g ON g.id = p.group_id
-                   WHERE r.session_id = ?
-                     AND r.status = 'completed'
-                   GROUP BY g.id, g.name
-                   ORDER BY total_sales DESC""",
-                (session_id,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            con.execute("DETACH DATABASE pdb")
-
-
-def session_voided_receipts(session_id: int) -> list[dict]:
-    """Return all voided receipts for a session with their void reason."""
-    with _conn() as con:
-        rows = con.execute(
-            """SELECT r.receipt_number, r.total, r.created_at,
-                      rf.reason, rf.created_at AS voided_at
-               FROM receipts r
-               LEFT JOIN refunds rf ON rf.receipt_id = r.id
-               WHERE r.session_id = ? AND r.status = 'voided'
-               ORDER BY r.created_at""",
-            (session_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def exchange_receipt(receipt_id: int, user_id: int,
-                     reason: str, exchange_note: str = "",
-                     items: list[dict] = None) -> bool:
-    """Record an exchange against a completed receipt.
-
-    items — list of {product_id, product_name, qty, unit_price,
-                      exchange_for_name, exchange_for_product_id}
-    """
-    with _conn() as con:
-        row = con.execute(
-            "SELECT id, total FROM receipts WHERE id=? AND status='completed'",
-            (receipt_id,)
-        ).fetchone()
-        if not row:
-            return False
-        full_reason = reason
-        if exchange_note:
-            full_reason = f"{reason} | Note: {exchange_note}"
-        ins = con.execute(
-            "INSERT INTO refunds (receipt_id, user_id, refund_type, reason, amount) "
-            "VALUES (?,?,'exchange',?,?)",
-            (receipt_id, user_id, full_reason, row["total"])
-        )
-        refund_id = ins.lastrowid
-        if items:
-            for it in items:
-                con.execute(
-                    "INSERT INTO refund_items "
-                    "(refund_id, product_id, product_name, qty, unit_price, "
-                    " exchange_for_name, exchange_for_product_id) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (refund_id, it.get("product_id"), it.get("product_name", ""),
-                     it.get("qty", 1), it.get("unit_price", 0.0),
-                     it.get("exchange_for_name", ""),
-                     it.get("exchange_for_product_id"))
-                )
-        con.commit()
-        return True
+        )]
 
 
 def get_receipts_with_refund_summary(
-    status: str = None,
-    search: str = "",
-    date_from: str = "",
-    date_to: str = "",
-    limit: int = 200,
-    offset: int = 0,
+    status: str = None, search: str = "",
+    date_from: str = "", date_to: str = "",
+    limit: int = 200, offset: int = 0,
 ) -> list[dict]:
     """Like get_receipts but enriches each row with refund summary data:
       - has_partial:    bool — has at least one partial refund
@@ -460,19 +499,63 @@ def get_receipts_with_refund_summary(
     return receipts
 
 
-def get_refunds_for_receipt(receipt_id: int) -> list[dict]:
-    """Return all refund/void records for a receipt, newest first."""
+def session_voided_receipts(session_id: int) -> list[dict]:
     with _conn() as con:
-        return [dict(r) for r in con.execute(
-            "SELECT * FROM refunds WHERE receipt_id = ? ORDER BY id DESC",
-            (receipt_id,)
-        )]
-
-
-def get_session_receipts(session_id: int) -> list[dict]:
-    """Return all receipts for a session."""
-    with _conn() as con:
-        return [dict(r) for r in con.execute(
-            "SELECT * FROM receipts WHERE session_id = ? ORDER BY created_at DESC",
+        rows = con.execute(
+            """SELECT r.receipt_number, r.total, r.created_at,
+                      rf.reason, rf.created_at AS voided_at
+               FROM receipts r
+               LEFT JOIN refunds rf ON rf.receipt_id = r.id AND rf.refund_type = 'void'
+               WHERE r.session_id = ? AND r.status = 'voided'
+               ORDER BY r.created_at""",
             (session_id,)
-        )]
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── Reporting helpers ─────────────────────────────────────────────────────────
+
+def session_totals(session_id: int) -> dict:
+    with _conn() as con:
+        row = con.execute(
+            """SELECT
+                COUNT(*)                                        AS transaction_count,
+                COALESCE(SUM(CASE WHEN status='completed'
+                              THEN total ELSE 0 END), 0)       AS total_sales,
+                COALESCE(SUM(CASE WHEN status='completed'
+                              THEN gct_amount ELSE 0 END), 0)  AS total_gct,
+                COALESCE(SUM(CASE WHEN status='completed'
+                              THEN discount_amount ELSE 0 END),0) AS total_discount,
+                COUNT(CASE WHEN status='voided'   THEN 1 END)  AS voided_count,
+                COUNT(CASE WHEN status='refunded' THEN 1 END)  AS refunded_count
+               FROM receipts WHERE session_id = ?""",
+            (session_id,)
+        ).fetchone()
+        return dict(row)
+
+
+def session_group_totals(session_id: int) -> list[dict]:
+    """Sales broken down by product group for a session. Cross-file read via
+    ATTACH — fine for querying, just not for FK enforcement."""
+    from config import DB_PRODUCTS
+    with _conn() as con:
+        con.execute("ATTACH DATABASE ? AS pdb", (DB_PRODUCTS,))
+        try:
+            rows = con.execute(
+                """SELECT
+                       COALESCE(g.name, 'Ungrouped')  AS group_name,
+                       SUM(ri.line_total)              AS total_sales,
+                       SUM(ri.quantity)                AS item_count
+                   FROM receipt_items ri
+                   JOIN receipts r ON r.id = ri.receipt_id
+                   LEFT JOIN pdb.products p ON p.id = ri.product_id
+                   LEFT JOIN pdb.groups g ON g.id = p.group_id
+                   WHERE r.session_id = ?
+                     AND r.status = 'completed'
+                   GROUP BY g.id, g.name
+                   ORDER BY total_sales DESC""",
+                (session_id,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.execute("DETACH DATABASE pdb")
