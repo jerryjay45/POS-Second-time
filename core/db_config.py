@@ -1,19 +1,23 @@
 """
 core/db_config.py
-Config database — business settings, GCT rate, discount levels,
+Config database — business settings, GCT rate, discount defaults,
 quick keys (F1–F8), printer config, and PostgreSQL connection info.
 
 Tables
 ------
 business      — single-row business info
 settings      — key/value store for all other config
-quick_keys    — F1–F8 product assignments
+quick_keys    — F1–F8 -> product_id assignments (soft ref, products.db).
+                Stores ONLY the product_id — name/price are resolved live
+                from products.db at read time via get_quick_keys(), so a
+                quick key always reflects the product's current price
+                instead of a stale snapshot from when it was assigned.
 """
 
 import sqlite3
 import threading
 from contextlib import contextmanager
-from config import DB_CONFIG
+from config import DB_CONFIG, DB_PRODUCTS
 
 _local = threading.local()
 
@@ -52,9 +56,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 CREATE TABLE IF NOT EXISTS quick_keys (
     slot        INTEGER PRIMARY KEY,   -- 1–8  (F1=1 … F8=8)
-    product_id  INTEGER DEFAULT NULL,
-    product_name TEXT   DEFAULT NULL,
-    product_price REAL  DEFAULT NULL
+    product_id  INTEGER DEFAULT NULL   -- soft ref, products.db — resolved live, not snapshotted
 );
 """
 
@@ -234,39 +236,60 @@ def checkout_quick_amounts() -> list[float]:
 
 
 # ── Quick Keys (F1–F8) ────────────────────────────────────────────────────────
+#
+# Only product_id is stored here. Name/barcode/price are resolved live from
+# products.db on every read via ATTACH DATABASE (read-only cross-file join,
+# same pattern as db_checkout.session_group_totals — not FK-enforced, just
+# a query-time join). This means editing a product's price is immediately
+# reflected on its quick key without needing to re-save the key assignment.
+#
+# Effective price follows the same precedence as everywhere else a product's
+# price is resolved: variant-group price > alias-group price > own price,
+# since a variant/alias member's own `selling_price` column isn't authoritative.
 
 def get_quick_keys() -> list[dict]:
-    """Return all 8 slots ordered by slot number."""
+    """Return all 8 slots ordered by slot number, with live product data.
+    A slot with no product assigned, or whose product_id no longer exists
+    in products.db, comes back with product fields as None (empty key)."""
     with _conn() as con:
-        return [dict(r) for r in con.execute(
-            "SELECT * FROM quick_keys ORDER BY slot"
-        )]
+        con.execute("ATTACH DATABASE ? AS pdb", (DB_PRODUCTS,))
+        try:
+            rows = con.execute(
+                """
+                SELECT qk.slot, qk.product_id,
+                       p.name    AS product_name,
+                       p.barcode AS product_barcode,
+                       COALESCE(vg.selling_price, ag.selling_price, p.selling_price) AS product_price
+                FROM   quick_keys qk
+                LEFT JOIN pdb.products       p  ON p.id  = qk.product_id
+                LEFT JOIN pdb.variant_groups vg ON vg.id = p.variant_group_id
+                LEFT JOIN pdb.alias_groups   ag ON ag.id = p.alias_group_id
+                ORDER BY qk.slot
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            con.execute("DETACH DATABASE pdb")
 
 
-def set_quick_key(slot: int, product_id: int = None,
-                  product_name: str = None, product_price: float = None):
-    """Assign or clear (pass None) a quick-key slot."""
+def set_quick_key(slot: int, product_id: int = None):
+    """Assign (or clear, with product_id=None) a quick-key slot."""
     with _conn() as con:
         con.execute(
-            "UPDATE quick_keys SET product_id=?, product_name=?, product_price=? "
-            "WHERE slot=?",
-            (product_id, product_name, product_price, slot)
+            "UPDATE quick_keys SET product_id = ? WHERE slot = ?",
+            (product_id, slot)
         )
         con.commit()
 
 
 def save_quick_keys(assignments: list[dict]):
-    """
-    Bulk-save all 8 slots.
-    assignments: list of dicts with keys slot, product_id, product_name, product_price
-    """
+    """Bulk-save all 8 slots.
+    assignments: list of dicts with keys slot, product_id"""
     with _conn() as con:
         for a in assignments:
             con.execute(
-                "UPDATE quick_keys SET product_id=?, product_name=?, product_price=? "
-                "WHERE slot=?",
-                (a.get("product_id"), a.get("product_name"),
-                 a.get("product_price"), a["slot"])
+                "UPDATE quick_keys SET product_id = ? WHERE slot = ?",
+                (a.get("product_id"), a["slot"])
             )
         con.commit()
 
