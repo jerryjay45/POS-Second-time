@@ -23,11 +23,12 @@ from ui.shared.theme import (
 from core.db_products import (
     get_products, get_product_by_id, add_product, update_product,
     delete_product, get_groups, add_group,
-    get_price_groups, add_price_group, update_price_group,
+    get_alias_groups, get_alias_group_by_id, add_alias_group, update_alias_group,
+    get_variant_groups, get_variant_group_by_id, add_variant_group, update_variant_group,
+    adjust_variant_group_stock,
+    get_discount_levels,
     count_products, cascade_single_cost_to_cases, recalculate_all_cases,
     adjust_stock,
-    get_case_groups, get_case_group_by_id,
-    add_case_group, update_case_group, adjust_case_group_stock,
 )
 from core.db_users    import get_users, get_sessions, open_session, close_session, get_user_by_id, has_open_session
 from core.db_checkout import (
@@ -96,12 +97,15 @@ class SupervisorWindow(BaseWindow):
         self.tabs.addTab(self._build_products_tab(),     "📦  Products")
         self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
         self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
-        # TODO: Void/Refund tab pulled out early — added before the rest of
-        # the workflow was stable. Underlying module (ui/supervisor/
-        # void_refund_tab.py) is untouched; re-enable by uncommenting below.
-        # from ui.supervisor.void_refund_tab import VoidRefundTab
-        # self._void_refund_tab = VoidRefundTab(user=self.user, parent=self)
-        # self.tabs.addTab(self._void_refund_tab, "↩  Void / Refund")
+        # The old standalone void_refund_tab.py file was retired — its
+        # functionality is superseded by the inline void/refund section
+        # built into this window's own tab (see _vr_* methods below),
+        # which already implements the fixed reconciliation logic.
+        # NOTE: _build_void_tab() existed in the original codebase but was
+        # never actually added here — only reachable via the (now deleted)
+        # standalone file, and only from the Manager window. Supervisors
+        # had no void/refund access at all. Adding it here fixes that.
+        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
         self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
         self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
         self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
@@ -330,10 +334,10 @@ class SupervisorWindow(BaseWindow):
         # Mode toggle — radio buttons
         cb_lay.addWidget(self._flabel("Case Mode"))
         mode_row = QHBoxLayout(); mode_row.setSpacing(16)
-        self.case_mode_linked = QRadioButton("Linked to specific product")
-        self.case_mode_pool   = QRadioButton("Shared pool")
+        self.case_mode_linked  = QRadioButton("Linked to specific product")
+        self.case_mode_variant = QRadioButton("Linked to a variant group")
         self.case_mode_linked.setChecked(True)
-        for rb in (self.case_mode_linked, self.case_mode_pool):
+        for rb in (self.case_mode_linked, self.case_mode_variant):
             rb.setStyleSheet(f"color:{DARK_CARD};font-size:12px;")
             mode_row.addWidget(rb)
         mode_row.addStretch()
@@ -395,43 +399,48 @@ class SupervisorWindow(BaseWindow):
         m1_lay.addWidget(self.case_restock_feedback)
         cb_lay.addWidget(self.case_mode1_frame)
 
-        # ── Mode 2 panel: shared pool ─────────────────────────────────
+        # ── Mode 2 panel: linked to a variant group ─────────────────────
+        # Replaces the old "shared pool" (case_group/pool_stock) mechanism.
+        # A case linked here derives cost/price from the variant group's
+        # cost (same as Mode 1 derives from a single product's cost) and
+        # decrements the GROUP's shared stock on sale, not a pool of its own.
         self.case_mode2_frame = QFrame(); self.case_mode2_frame.setVisible(False)
         self.case_mode2_frame.setStyleSheet("background:transparent;border:none;")
         m2_lay = QVBoxLayout(self.case_mode2_frame); m2_lay.setContentsMargins(0,4,0,0); m2_lay.setSpacing(6)
-        # Case group picker + inline create
-        m2_lay.addWidget(self._flabel("Case Group"))
+        # Variant group picker + inline create
+        m2_lay.addWidget(self._flabel("Variant Group"))
         m2_grp_row = QHBoxLayout(); m2_grp_row.setSpacing(6)
-        self.f_case_group_combo = QComboBox()
-        self.f_case_group_combo.setStyleSheet(self._input_style())
-        self.f_case_group_combo.setMinimumHeight(32)
-        self.f_case_group_combo.currentIndexChanged.connect(self._on_case_group_changed)
-        m2_grp_row.addWidget(self.f_case_group_combo, stretch=1)
+        self.f_case_variant_group_combo = QComboBox()
+        self.f_case_variant_group_combo.setStyleSheet(self._input_style())
+        self.f_case_variant_group_combo.setMinimumHeight(32)
+        self.f_case_variant_group_combo.currentIndexChanged.connect(self._on_case_variant_group_changed)
+        m2_grp_row.addWidget(self.f_case_variant_group_combo, stretch=1)
         new_grp_btn = QPushButton("＋")
         new_grp_btn.setFixedSize(32, 32)
-        new_grp_btn.setToolTip("Create a new case group")
+        new_grp_btn.setToolTip("Create a new variant group")
         new_grp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_grp_btn.setStyleSheet(
             f"QPushButton{{background:{AMBER};color:white;border:none;"
             f"border-radius:6px;font-size:16px;font-weight:700;}}"
             f"QPushButton:hover{{background:{AMBER_DARK};}}")
-        new_grp_btn.clicked.connect(self._create_case_group)
+        new_grp_btn.clicked.connect(self._create_variant_group_inline)
         m2_grp_row.addWidget(new_grp_btn)
         m2_lay.addLayout(m2_grp_row)
-        # Group info: cost, price, pool stock
+        # Group info: cost, price, shared stock
         self.case_grp_info_lbl = QLabel("")
         self.case_grp_info_lbl.setStyleSheet(f"color:{MUTED};font-size:10px;")
         self.case_grp_info_lbl.setWordWrap(True)
         m2_lay.addWidget(self.case_grp_info_lbl)
-        # Units per case (shared with mode 1 spinbox but shown here too)
+        # Units per case (mirrors Mode 1's spinbox — cost = group.cost × this)
         m2_lay.addWidget(self._flabel("Units per Case (for this product)"))
         self.f_case_qty2 = QSpinBox(); self.f_case_qty2.setMinimum(1); self.f_case_qty2.setMaximum(9999)
         self.f_case_qty2.setStyleSheet(self._input_style())
+        self.f_case_qty2.valueChanged.connect(self._on_case_variant_group_changed)
         m2_lay.addWidget(self.f_case_qty2)
-        # Pool restock
+        # Restock the group's shared stock
         m2_lay.addWidget(_divider())
-        m2_lay.addWidget(self._flabel("Restock Pool"))
-        self.pool_stock_lbl = QLabel("Select a case group to see pool stock.")
+        m2_lay.addWidget(self._flabel("Restock Variant Group Stock"))
+        self.pool_stock_lbl = QLabel("Select a variant group to see its stock.")
         self.pool_stock_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:11px;font-weight:600;")
         self.pool_stock_lbl.setWordWrap(True)
         m2_lay.addWidget(self.pool_stock_lbl)
@@ -440,7 +449,7 @@ class SupervisorWindow(BaseWindow):
         self.pool_restock_qty.setMinimum(1); self.pool_restock_qty.setMaximum(9999)
         self.pool_restock_qty.setStyleSheet(self._input_style())
         m2_restock_row.addWidget(self.pool_restock_qty, stretch=1)
-        self.pool_restock_add_btn = QPushButton("＋  Add to Pool")
+        self.pool_restock_add_btn = QPushButton("＋  Add Stock")
         self.pool_restock_add_btn.setFixedHeight(30); self.pool_restock_add_btn.setEnabled(False)
         self.pool_restock_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pool_restock_add_btn.setStyleSheet(
@@ -448,7 +457,7 @@ class SupervisorWindow(BaseWindow):
             f"border-radius:6px;font-size:11px;font-weight:700;padding:0 8px;}}"
             f"QPushButton:hover{{background:{GREEN};color:white;}}"
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
-        self.pool_restock_add_btn.clicked.connect(self._pool_restock_add)
+        self.pool_restock_add_btn.clicked.connect(self._case_variant_group_restock_add)
         self.pool_restock_remove_btn = QPushButton("−  Remove")
         self.pool_restock_remove_btn.setFixedHeight(30); self.pool_restock_remove_btn.setEnabled(False)
         self.pool_restock_remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -457,7 +466,7 @@ class SupervisorWindow(BaseWindow):
             f"border-radius:6px;font-size:11px;font-weight:700;padding:0 8px;}}"
             f"QPushButton:hover{{background:{RED};color:white;}}"
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
-        self.pool_restock_remove_btn.clicked.connect(self._pool_restock_remove)
+        self.pool_restock_remove_btn.clicked.connect(self._case_variant_group_restock_remove)
         m2_restock_row.addWidget(self.pool_restock_add_btn)
         m2_restock_row.addWidget(self.pool_restock_remove_btn)
         m2_lay.addLayout(m2_restock_row)
@@ -563,8 +572,8 @@ class SupervisorWindow(BaseWindow):
             tags_color = AMBER_DARK if tags else MUTED
             self.product_table.setItem(row, 0, cell(p["name"]))
             self.product_table.setItem(row, 1, cell(p["barcode"], MUTED))
-            self.product_table.setItem(row, 2, cell(f"${p['cost']:.2f}", AMBER_DARK, R))
-            self.product_table.setItem(row, 3, cell(f"${p['selling_price']:.2f}", GREEN, R))
+            self.product_table.setItem(row, 2, cell(f"${p['effective_cost']:.2f}", AMBER_DARK, R))
+            self.product_table.setItem(row, 3, cell(f"${p['effective_selling_price']:.2f}", GREEN, R))
             self.product_table.setItem(row, 4, cell(tags_str, tags_color, C))
             act = QWidget(); al = QHBoxLayout(act)
             al.setContentsMargins(4, 2, 4, 2); al.setSpacing(4)
@@ -629,11 +638,12 @@ class SupervisorWindow(BaseWindow):
         self.f_case_cost_hint.setText("")
         self.case_restock_qty.setValue(1)
         self.case_restock_feedback.setText("")
-        # Mode 2 reset
+        # Mode 2 reset (case linked to a variant group)
         self.case_mode_linked.setChecked(True)
         self.f_case_qty2.setValue(1)
         self.pool_restock_qty.setValue(1)
         self.pool_restock_feedback.setText("")
+        self.case_grp_info_lbl.setText("")
         self.f_group.setEnabled(True)
         self.f_group.setToolTip("")
 
@@ -644,19 +654,19 @@ class SupervisorWindow(BaseWindow):
         self.form_title.setText("✎  Edit Product")
         self.f_barcode[1].setText(p["barcode"])
         self.f_name[1].setText(p["name"])
-        self.f_cost[1].setText(str(p["cost"]))
-        self.f_price.setText(f"${p['selling_price']:.2f}")
+        self.f_cost[1].setText(str(p["effective_cost"]))
+        self.f_price.setText(f"${p['effective_selling_price']:.2f}")
         self.t_gct.setChecked(bool(p["gct_applicable"]))
         self.t_case.setChecked(bool(p["is_case"]))
         if p["is_case"]:
-            is_pool = bool(p.get("case_group_id"))
+            is_variant_mode = bool(p.get("case_variant_group_id"))
             # Set mode toggle before populating panels
-            self.case_mode_linked.setChecked(not is_pool)
-            self.case_mode_pool.setChecked(is_pool)
-            if is_pool:
-                # Mode 2 — shared pool
+            self.case_mode_linked.setChecked(not is_variant_mode)
+            self.case_mode_variant.setChecked(is_variant_mode)
+            if is_variant_mode:
+                # Mode 2 — linked to a variant group
                 self.f_case_qty2.setValue(p.get("case_qty") or 1)
-                self._populate_case_group_combo(select_id=p.get("case_group_id"))
+                self._populate_case_variant_group_combo(select_id=p.get("case_variant_group_id"))
                 self.f_group.setEnabled(True)
                 self.f_group.setToolTip("")
             else:
@@ -680,36 +690,44 @@ class SupervisorWindow(BaseWindow):
         self.f_variant_group.set_value(p.get("variant_group_id"))
 
         # Discount level 1 — named level or custom inline
-        if p.get("inline_disc1_qty") and p.get("inline_disc1_pct"):
+        if p.get("inline_discount1_qty") and p.get("inline_discount1_pct"):
             # Select "Custom…" and fill inputs
             for i in range(self.f_disc1.count()):
                 if self.f_disc1.itemData(i) == "custom":
                     self.f_disc1.setCurrentIndex(i); break
-            self.f_disc1_qty.setValue(int(p["inline_disc1_qty"]))
-            self.f_disc1_pct.setValue(float(p["inline_disc1_pct"]))
+            self.f_disc1_qty.setValue(int(p["inline_discount1_qty"]))
+            self.f_disc1_pct.setValue(float(p["inline_discount1_pct"]))
             self.f_disc1_custom.setVisible(True)
         else:
             self.f_disc1_custom.setVisible(False)
             for i in range(self.f_disc1.count()):
-                if self.f_disc1.itemData(i) == p.get("discount_level1"):
+                if self.f_disc1.itemData(i) == p.get("discount_level1_id"):
                     self.f_disc1.setCurrentIndex(i); break
 
         # Discount level 2 — named level or custom inline
-        if p.get("inline_disc2_qty") and p.get("inline_disc2_pct"):
+        if p.get("inline_discount2_qty") and p.get("inline_discount2_pct"):
             for i in range(self.f_disc2.count()):
                 if self.f_disc2.itemData(i) == "custom":
                     self.f_disc2.setCurrentIndex(i); break
-            self.f_disc2_qty.setValue(int(p["inline_disc2_qty"]))
-            self.f_disc2_pct.setValue(float(p["inline_disc2_pct"]))
+            self.f_disc2_qty.setValue(int(p["inline_discount2_qty"]))
+            self.f_disc2_pct.setValue(float(p["inline_discount2_pct"]))
             self.f_disc2_custom.setVisible(True)
         else:
             self.f_disc2_custom.setVisible(False)
             for i in range(self.f_disc2.count()):
-                if self.f_disc2.itemData(i) == p.get("discount_level2"):
+                if self.f_disc2.itemData(i) == p.get("discount_level2_id"):
                     self.f_disc2.setCurrentIndex(i); break
-        # Show stock section with current level (only for non-case products)
-        stock = p.get("stock", 0)
-        self.stock_current_lbl.setText(f"Current stock: {stock} unit{'s' if stock != 1 else ''}")
+        # Show stock section with current level (only for non-case products).
+        # For a variant-group member, this still works — adjust_stock()
+        # redirects to the group's shared stock — just label it clearly.
+        stock = p.get("effective_stock", 0)
+        if p.get("variant_group_id"):
+            self.stock_current_lbl.setText(
+                f"Current stock: {stock} unit{'s' if stock != 1 else ''}  "
+                f"(shared with {p.get('variant_group_name', 'variant group')})"
+            )
+        else:
+            self.stock_current_lbl.setText(f"Current stock: {stock} unit{'s' if stock != 1 else ''}")
         self.stock_qty.setValue(1)
         self.stock_reason.setCurrentIndex(0)
         # Stock section is hidden for case products — they use "Restock via Case" instead
@@ -726,43 +744,42 @@ class SupervisorWindow(BaseWindow):
         alias_group_id   = self.f_alias_group.selected_id()
         variant_group_id = self.f_variant_group.selected_id()
 
-        is_case         = self.t_case.isChecked()
-        is_pool_mode    = is_case and self.case_mode_pool.isChecked()
-        case_group_id   = self.f_case_group_combo.currentData() if is_pool_mode else None
-        case_product_id = self.f_case_parent.selected_id() if (is_case and not is_pool_mode) else None
+        is_case             = self.t_case.isChecked()
+        is_variant_mode     = is_case and self.case_mode_variant.isChecked()
+        case_variant_group_id = self.f_case_variant_group_combo.currentData() if is_variant_mode else None
+        case_product_id     = self.f_case_parent.selected_id() if (is_case and not is_variant_mode) else None
         # Each mode uses its own case_qty spinbox
         if is_case:
-            case_qty = self.f_case_qty2.value() if is_pool_mode else self.f_case_qty.value()
+            case_qty = self.f_case_qty2.value() if is_variant_mode else self.f_case_qty.value()
         else:
             case_qty = None
 
-        # Mode 1 — derive cost from linked parent single product
+        from core.db_config import get as cfg_get
+        try:
+            case_profit_pct = float(cfg_get("case_profit_pct", "0.10"))
+        except (ValueError, TypeError):
+            case_profit_pct = 0.10
+
+        # Mode 1 — derive cost from linked parent single product's OWN cost.
+        # (A variant-group member can't be a Mode-1 parent — the combo
+        # already excludes those — so parent["cost"] is always authoritative here.)
         if is_case and case_product_id:
             parent = get_product_by_id(case_product_id)
             if parent and parent["cost"] > 0:
                 cost = round(parent["cost"] * (case_qty or 1), 4)
                 self.f_cost[1].setText(str(cost))
+            selling_price = round(cost * (1 + case_profit_pct), 2)
 
-        # Mode 2 — derive cost + price from the case group row
-        if is_pool_mode and case_group_id:
-            g = get_case_group_by_id(case_group_id)
-            if g:
-                cost          = g["cost"]
-                selling_price = g["selling_price"]
+        # Mode 2 — derive cost from the linked variant group's cost, same formula
+        elif is_variant_mode and case_variant_group_id:
+            g = get_variant_group_by_id(case_variant_group_id)
+            if g and g["cost"] > 0:
+                cost = round(g["cost"] * (case_qty or 1), 4)
                 self.f_cost[1].setText(str(cost))
-            else:
-                selling_price = self._get_selling_price(cost, group_id)
+            selling_price = round(cost * (1 + case_profit_pct), 2)
+
         else:
             selling_price = self._get_selling_price(cost, group_id)
-
-        # Mode 1 linked cases use case_profit_pct instead of group margin
-        if is_case and case_product_id and not is_pool_mode:
-            from core.db_config import get as cfg_get
-            try:
-                pct = float(cfg_get("case_profit_pct", "0.10"))
-            except (ValueError, TypeError):
-                pct = 0.10
-            selling_price = round(cost * (1 + pct), 2)
 
         disc1_id = self.f_disc1.currentData()
         disc2_id = self.f_disc2.currentData()
@@ -779,23 +796,23 @@ class SupervisorWindow(BaseWindow):
             is_case=int(is_case),
             case_qty=case_qty,
             case_product_id=case_product_id,
-            case_group_id=case_group_id,
-            discount_level1=disc1_id,
-            discount_level2=disc2_id,
+            case_variant_group_id=case_variant_group_id,
+            discount_level1_id=disc1_id,
+            discount_level2_id=disc2_id,
         )
         # Custom (inline) discount tiers override the discount_level FK above
         if self.f_disc1.currentData() == "custom":
-            kwargs["inline_disc1_qty"] = self.f_disc1_qty.value()
-            kwargs["inline_disc1_pct"] = self.f_disc1_pct.value()
+            kwargs["inline_discount1_qty"] = self.f_disc1_qty.value()
+            kwargs["inline_discount1_pct"] = self.f_disc1_pct.value()
         elif self.f_disc1.currentData() is not None:
-            kwargs["inline_disc1_qty"] = None
-            kwargs["inline_disc1_pct"] = None
+            kwargs["inline_discount1_qty"] = None
+            kwargs["inline_discount1_pct"] = None
         if self.f_disc2.currentData() == "custom":
-            kwargs["inline_disc2_qty"] = self.f_disc2_qty.value()
-            kwargs["inline_disc2_pct"] = self.f_disc2_pct.value()
+            kwargs["inline_discount2_qty"] = self.f_disc2_qty.value()
+            kwargs["inline_discount2_pct"] = self.f_disc2_pct.value()
         elif self.f_disc2.currentData() is not None:
-            kwargs["inline_disc2_qty"] = None
-            kwargs["inline_disc2_pct"] = None
+            kwargs["inline_discount2_qty"] = None
+            kwargs["inline_discount2_pct"] = None
         try:
             if self._editing_product_id:
                 old = get_product_by_id(self._editing_product_id)
@@ -828,32 +845,27 @@ class SupervisorWindow(BaseWindow):
     def _sync_group_members(self, cost: float, selling_price: float,
                             alias_group_id: int | None,
                             variant_group_id: int | None):
-        """Silently sync cost and selling_price to all members of each group.
+        """Push an edited cost/price up to the owning group.
 
-        Alias and variant groups are defined as always having the same cost
-        and selling price — no confirmation needed, just apply immediately.
+        The group is the authoritative source now (member products defer to
+        it via effective_cost/effective_selling_price — see db_products.py),
+        so there's no need to loop and rewrite every member's own row; just
+        updating the group is enough for every member to pick it up on next
+        read. update_alias_group()/update_variant_group() also cascade the
+        new cost through to any case products linked to this group.
         """
-        group_ids = [g for g in (alias_group_id, variant_group_id) if g]
-        if not group_ids:
-            return
+        affected_cases = []
+        if alias_group_id:
+            affected_cases += update_alias_group(alias_group_id, cost=cost, selling_price=selling_price)
+        if variant_group_id:
+            affected_cases += update_variant_group(variant_group_id, cost=cost, selling_price=selling_price)
 
-        updated = []
-        for gid in group_ids:
-            members = [
-                p for p in get_products(limit=5000)
-                if (p.get("alias_group_id") == gid or p.get("variant_group_id") == gid)
-                and p["id"] != self._editing_product_id
-            ]
-            for p in members:
-                update_product(p["id"], cost=cost, selling_price=selling_price)
-                updated.append(p["name"])
-            update_price_group(gid, selling_price=selling_price)
-
-        if updated:
-            names = ", ".join(updated)
+        if affected_cases:
+            names = ", ".join(c["name"] for c in affected_cases)
             QMessageBox.information(
-                self, "Group Synced",
-                f"Cost (${cost:.4f}) and price (${selling_price:.2f}) synced to:\n{names}"
+                self, "Case Prices Updated",
+                f"Cost (${cost:.4f}) and price (${selling_price:.2f}) synced to the group.\n"
+                f"Linked case product{'s' if len(affected_cases) != 1 else ''} repriced: {names}"
             )
 
     def _delete_product(self, pid: int):
@@ -870,7 +882,7 @@ class SupervisorWindow(BaseWindow):
         reason = self.stock_reason.currentText()
         adjust_stock(self._editing_product_id, qty, reason, self.user["id"])
         p = get_product_by_id(self._editing_product_id)
-        stock = p["stock"] if p else 0
+        stock = p["effective_stock"] if p else 0
         self.stock_current_lbl.setText(f"Current stock: {stock} unit{'s' if stock != 1 else ''}")
         self.stock_qty.setValue(1)
 
@@ -880,7 +892,7 @@ class SupervisorWindow(BaseWindow):
         reason = self.stock_reason.currentText()
         adjust_stock(self._editing_product_id, -qty, reason, self.user["id"])
         p = get_product_by_id(self._editing_product_id)
-        stock = p["stock"] if p else 0
+        stock = p["effective_stock"] if p else 0
         self.stock_current_lbl.setText(f"Current stock: {stock} unit{'s' if stock != 1 else ''}")
         self.stock_qty.setValue(1)
 
@@ -933,7 +945,7 @@ class SupervisorWindow(BaseWindow):
         if bool(state):
             self.f_case_parent.exclude_id(self._editing_product_id)
             self.stock_section.setVisible(False)
-            self._populate_case_group_combo()
+            self._populate_case_variant_group_combo()
             self._on_case_mode_changed()
         else:
             self.f_case_parent.clear_value()
@@ -943,14 +955,15 @@ class SupervisorWindow(BaseWindow):
             self.stock_section.setVisible(bool(self._editing_product_id))
 
     def _on_case_mode_changed(self):
-        """Switch between Mode 1 (linked) and Mode 2 (shared pool) panels."""
+        """Switch between Mode 1 (linked to a single product) and
+        Mode 2 (linked to a variant group) panels."""
         linked = self.case_mode_linked.isChecked()
         self.case_mode1_frame.setVisible(linked)
         self.case_mode2_frame.setVisible(not linked)
         if linked:
             self._on_case_parent_changed()
         else:
-            self._on_case_group_changed()
+            self._on_case_variant_group_changed()
 
     # ── Mode 1 helpers ────────────────────────────────────────────────────────
 
@@ -1032,59 +1045,66 @@ class SupervisorWindow(BaseWindow):
         self.case_restock_feedback.setText(
             f"✓  Removed {cases} case{'s' if cases != 1 else ''} ({units} units) from parent stock.")
 
-    # ── Mode 2 helpers ────────────────────────────────────────────────────────
+    # ── Mode 2 helpers (case linked to a variant group) ─────────────────────
 
-    def _populate_case_group_combo(self, select_id: int = None):
-        self.f_case_group_combo.blockSignals(True)
-        self.f_case_group_combo.clear()
-        self.f_case_group_combo.addItem("— Select case group —", None)
-        for g in get_case_groups():
-            self.f_case_group_combo.addItem(g["name"], g["id"])
+    def _populate_case_variant_group_combo(self, select_id: int = None):
+        self.f_case_variant_group_combo.blockSignals(True)
+        self.f_case_variant_group_combo.clear()
+        self.f_case_variant_group_combo.addItem("— Select variant group —", None)
+        for g in get_variant_groups():
+            self.f_case_variant_group_combo.addItem(g["name"], g["id"])
             if g["id"] == select_id:
-                self.f_case_group_combo.setCurrentIndex(self.f_case_group_combo.count() - 1)
-        self.f_case_group_combo.blockSignals(False)
-        self._on_case_group_changed()
+                self.f_case_variant_group_combo.setCurrentIndex(
+                    self.f_case_variant_group_combo.count() - 1)
+        self.f_case_variant_group_combo.blockSignals(False)
+        self._on_case_variant_group_changed()
 
-    def _on_case_group_changed(self):
-        gid = self.f_case_group_combo.currentData()
+    def _on_case_variant_group_changed(self):
+        """Update info label and derived cost hint when the linked variant
+        group or units-per-case changes. Mirrors _on_case_parent_changed
+        (Mode 1) — cost = group.cost × qty, price = cost × (1+case_profit_pct)."""
+        gid = self.f_case_variant_group_combo.currentData()
         if not gid:
             self.case_grp_info_lbl.setText("")
-            self.pool_stock_lbl.setText("Select a case group to see pool stock.")
+            self.pool_stock_lbl.setText("Select a variant group to see its stock.")
             self.pool_restock_add_btn.setEnabled(False)
             self.pool_restock_remove_btn.setEnabled(False)
             return
-        g = get_case_group_by_id(gid)
+        g = get_variant_group_by_id(gid)
         if not g: return
+        qty = self.f_case_qty2.value() or 1
+        derived_cost = round(g["cost"] * qty, 4)
         self.case_grp_info_lbl.setText(
-            f"Cost: ${g['cost']:.4f}   Selling price: ${g['selling_price']:.2f}"
-            f"   Case qty: {g['case_qty'] or '—'}"
+            f"Group cost/unit: ${g['cost']:.4f}   Group price/unit: ${g['selling_price']:.2f}\n"
+            f"Case cost = ${g['cost']:.4f} × {qty} = ${derived_cost:.4f}  (auto-set on save)"
         )
-        pool = g["pool_stock"]
+        stock = g["stock"]
         self.pool_stock_lbl.setText(
-            f"Pool stock: {pool} case{'s' if pool != 1 else ''} available")
+            f"Group stock: {stock} unit{'s' if stock != 1 else ''} available "
+            f"(~{stock // qty} case{'s' if stock // qty != 1 else ''})")
         self.pool_restock_add_btn.setEnabled(True)
         self.pool_restock_remove_btn.setEnabled(True)
         self.pool_restock_feedback.setText("")
 
-    def _create_case_group(self):
-        """Inline dialog to create a new case group."""
-        dlg = QDialog(self); dlg.setWindowTitle("New Case Group")
+    def _create_variant_group_inline(self):
+        """Inline dialog to create a new variant group from the case-linking panel."""
+        dlg = QDialog(self); dlg.setWindowTitle("New Variant Group")
         dlg.setMinimumWidth(320)
         lay = QVBoxLayout(dlg); lay.setSpacing(10); lay.setContentsMargins(16,16,16,16)
         lay.addWidget(QLabel("Group Name"))
-        name_edit = QLineEdit(); name_edit.setPlaceholderText("e.g. SPRITE 330ML CASES")
+        name_edit = QLineEdit(); name_edit.setPlaceholderText("e.g. SPRITE 330ML VARIANTS")
         name_edit.setStyleSheet(self._input_style()); name_edit.setFixedHeight(34)
         lay.addWidget(name_edit)
-        lay.addWidget(QLabel("Units per Case"))
-        qty_spin = QSpinBox(); qty_spin.setMinimum(1); qty_spin.setMaximum(9999); qty_spin.setValue(24)
-        qty_spin.setStyleSheet(self._input_style()); qty_spin.setFixedHeight(34)
-        lay.addWidget(qty_spin)
-        lay.addWidget(QLabel("Cost per Case ($)"))
+        lay.addWidget(QLabel("Cost per Unit ($)"))
         cost_edit = QLineEdit("0.00"); cost_edit.setStyleSheet(self._input_style()); cost_edit.setFixedHeight(34)
         lay.addWidget(cost_edit)
-        lay.addWidget(QLabel("Selling Price per Case ($)"))
+        lay.addWidget(QLabel("Selling Price per Unit ($)"))
         price_edit = QLineEdit("0.00"); price_edit.setStyleSheet(self._input_style()); price_edit.setFixedHeight(34)
         lay.addWidget(price_edit)
+        lay.addWidget(QLabel("Starting Stock (units)"))
+        stock_spin = QSpinBox(); stock_spin.setMinimum(0); stock_spin.setMaximum(999999)
+        stock_spin.setStyleSheet(self._input_style()); stock_spin.setFixedHeight(34)
+        lay.addWidget(stock_spin)
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel"); cancel_btn.clicked.connect(dlg.reject)
         save_btn   = QPushButton("Create"); save_btn.clicked.connect(dlg.accept)
@@ -1101,42 +1121,35 @@ class SupervisorWindow(BaseWindow):
         except ValueError:
             QMessageBox.warning(self, "Invalid", "Enter valid cost and price values."); return
 
-        # Check for duplicate name before inserting
-        existing = [g for g in get_case_groups() if g["name"] == name]
-        if existing:
-            QMessageBox.warning(
-                self, "Name Already Exists",
-                f'A case group named "{name}" already exists.\n'
-                f'Please choose a different name or select the existing group.'
-            )
-            return
-
         try:
-            new_id = add_case_group(name, qty_spin.value(), cost, price)
+            new_id = add_variant_group(
+                name, cost=cost, selling_price=price, stock=stock_spin.value()
+            )
+        except ValueError as e:
+            QMessageBox.warning(self, "Name Already Exists", str(e))
+            return
         except Exception as e:
             QMessageBox.critical(self, "Error Creating Group", str(e))
             return
-        self._populate_case_group_combo(select_id=new_id)
+        self._populate_case_variant_group_combo(select_id=new_id)
 
-    def _pool_restock_add(self):
-        gid = self.f_case_group_combo.currentData()
+    def _case_variant_group_restock_add(self):
+        gid = self.f_case_variant_group_combo.currentData()
         if not gid: return
-        cases = self.pool_restock_qty.value()
-        adjust_case_group_stock(gid, cases, "Restock", self.user["id"])
-        self._on_case_group_changed()
+        qty = self.pool_restock_qty.value()
+        adjust_variant_group_stock(gid, qty, "Restock", self.user["id"])
+        self._on_case_variant_group_changed()
         self.pool_restock_feedback.setStyleSheet(f"color:{GREEN};font-size:10px;font-weight:600;")
-        self.pool_restock_feedback.setText(
-            f"✓  Added {cases} case{'s' if cases != 1 else ''} to pool.")
+        self.pool_restock_feedback.setText(f"✓  Added {qty} unit{'s' if qty != 1 else ''} to group stock.")
 
-    def _pool_restock_remove(self):
-        gid = self.f_case_group_combo.currentData()
+    def _case_variant_group_restock_remove(self):
+        gid = self.f_case_variant_group_combo.currentData()
         if not gid: return
-        cases = self.pool_restock_qty.value()
-        adjust_case_group_stock(gid, -cases, "Correction", self.user["id"])
-        self._on_case_group_changed()
+        qty = self.pool_restock_qty.value()
+        adjust_variant_group_stock(gid, -qty, "Correction", self.user["id"])
+        self._on_case_variant_group_changed()
         self.pool_restock_feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:10px;font-weight:600;")
-        self.pool_restock_feedback.setText(
-            f"✓  Removed {cases} case{'s' if cases != 1 else ''} from pool.")
+        self.pool_restock_feedback.setText(f"✓  Removed {qty} unit{'s' if qty != 1 else ''} from group stock.")
 
     def _populate_groups(self):
         self.f_group.clear(); self.f_group.addItem("— No Group —", None)
@@ -1177,10 +1190,9 @@ class SupervisorWindow(BaseWindow):
     def _populate_discount_levels(self, combo):
         combo.clear(); combo.addItem("— None —", None)
         try:
-            from core.db_products import get_discount_levels
             for lvl in get_discount_levels():
                 combo.addItem(
-                    f"{lvl['name']}  ({lvl['discount_percent']}% off, min qty {lvl['min_quantity']})",
+                    f"{lvl['name']}  ({lvl['percent']*100:.0f}% off, min qty {lvl['min_qty']})",
                     lvl["id"]
                 )
         except Exception:
@@ -1757,7 +1769,7 @@ class SupervisorWindow(BaseWindow):
 
         # Items table with checkboxes for partial refund
         self.vr_items_table = QTableWidget(); self.vr_items_table.setColumnCount(5)
-        self.vr_items_table.setHorizontalHeaderLabels(["✓","Item","Qty","Price","Total"])
+        self.vr_items_table.setHorizontalHeaderLabels(["Item","Sold Qty","Refund Qty","Price","Line Refund"])
         hh2 = self.vr_items_table.horizontalHeader()
         hh2.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         for c in [1,2,3,4]: hh2.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
@@ -1886,37 +1898,57 @@ class SupervisorWindow(BaseWindow):
         is_partial = self.vr_refund_mode.currentIndex()==1
         self.vr_items_table.setRowCount(len(self._vr_items_data))
         R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
+        from core.db_checkout import get_remaining_refundable_qty
         for r, it in enumerate(self._vr_items_data):
-            chk_w = QWidget(); chk_l = QHBoxLayout(chk_w); chk_l.setContentsMargins(4,0,4,0); chk_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            chk = QCheckBox(); chk.setChecked(True); chk.setEnabled(is_partial); chk.stateChanged.connect(self._vr_update_selected_amount)
-            chk_l.addWidget(chk); self.vr_items_table.setCellWidget(r, 0, chk_w)
-            self.vr_items_table.setItem(r, 1, QTableWidgetItem(it["product_name"]))
-            qi = QTableWidgetItem(str(it["quantity"])); qi.setTextAlignment(Qt.AlignmentFlag.AlignCenter); self.vr_items_table.setItem(r, 2, qi)
+            remaining = get_remaining_refundable_qty(it["id"])
+            self.vr_items_table.setItem(r, 0, QTableWidgetItem(it["product_name"]))
+            sold = QTableWidgetItem(str(it["quantity"])); sold.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.vr_items_table.setItem(r, 1, sold)
+
+            qty_spin = QSpinBox()
+            qty_spin.setMinimum(0); qty_spin.setMaximum(remaining)
+            qty_spin.setValue(remaining)  # default: refund everything left on this line
+            qty_spin.setEnabled(is_partial and remaining > 0)
+            if remaining == 0:
+                qty_spin.setToolTip("Already fully refunded/voided — nothing left on this line.")
+            qty_spin.valueChanged.connect(self._vr_update_selected_amount)
+            self.vr_items_table.setCellWidget(r, 2, qty_spin)
+
             pi = QTableWidgetItem(f"${it['unit_price']:.2f}"); pi.setTextAlignment(R); self.vr_items_table.setItem(r, 3, pi)
-            ti = QTableWidgetItem(f"${it['line_total']:.2f}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R); self.vr_items_table.setItem(r, 4, ti)
+            ti = QTableWidgetItem(f"${it['line_total']:.2f}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R)
+            self.vr_items_table.setItem(r, 4, ti)  # updated live in _vr_update_selected_amount
         self.vr_totals.setText(f"Subtotal: ${receipt['subtotal']:.2f}  |  GCT: ${receipt['gct_amount']:.2f}  |  <b>Total: ${receipt['total']:.2f}</b>")
         self.vr_totals.setTextFormat(Qt.TextFormat.RichText)
         self.vr_status_banner.setVisible(False); self.vr_reason.clear(); self._vr_update_buttons()
 
     def _vr_on_mode_changed(self):
         is_partial = self.vr_refund_mode.currentIndex()==1
-        for r in range(self.vr_items_table.rowCount()):
-            w = self.vr_items_table.cellWidget(r, 0)
-            if w:
-                chk = w.findChild(QCheckBox)
-                if chk: chk.setEnabled(is_partial)
+        from core.db_checkout import get_remaining_refundable_qty
+        for r, it in enumerate(self._vr_items_data):
+            spin = self.vr_items_table.cellWidget(r, 2)
+            if not spin: continue
+            remaining = get_remaining_refundable_qty(it["id"])
+            spin.setEnabled(is_partial and remaining > 0)
+            if not is_partial:
+                # Full refund — always request everything remaining on every line
+                spin.setValue(remaining)
         self._vr_update_selected_amount()
 
     def _vr_update_selected_amount(self):
-        if not self._vr_items_data or self.vr_refund_mode.currentIndex() == 0:
+        if not self._vr_items_data:
             self.vr_amount_lbl.setText(""); return
+        R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
         total = 0.0
         for r, it in enumerate(self._vr_items_data):
-            w = self.vr_items_table.cellWidget(r, 0)
-            chk = w.findChild(QCheckBox) if w else None
-            if chk and chk.isChecked():
-                total += it["line_total"]
-        self.vr_amount_lbl.setText(f"Selected refund: ${total:.2f}")
+            spin = self.vr_items_table.cellWidget(r, 2)
+            qty = spin.value() if spin else 0
+            # Same proportional formula the backend uses (db_checkout._validate_and_price_items)
+            line_amount = round((it["line_total"] / it["quantity"]) * qty, 2) if qty else 0.0
+            total += line_amount
+            cell = self.vr_items_table.item(r, 4)
+            if cell:
+                cell.setText(f"${line_amount:.2f}")
+        self.vr_amount_lbl.setText(f"Refund total: ${total:.2f}")
 
     def _vr_update_buttons(self):
         ok = self._vr_selected_tx_id is not None and self._vr_selected_tx_status=="completed" and bool(self.vr_reason.text().strip())
@@ -1928,7 +1960,13 @@ class SupervisorWindow(BaseWindow):
         reply = QMessageBox.question(self, "Confirm Void", f"Void receipt #{self._vr_selected_tx_id}?\nReason: {reason}\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes: return
-        if void_receipt(self._vr_selected_tx_id, self.user["id"], reason):
+        try:
+            voided = void_receipt(self._vr_selected_tx_id, self.user["id"], reason)
+        except ValueError as e:
+            QMessageBox.warning(self, "Cannot Void", str(e))
+            self._vr_on_row_selected()
+            return
+        if voided:
             # Increment stock for all items in the voided receipt
             from core.db_config import get_bool
             if get_bool("stock_tracking", False):
@@ -1954,25 +1992,38 @@ class SupervisorWindow(BaseWindow):
         if not reason: QMessageBox.warning(self, "Reason Required", "Please enter a reason."); return
         is_partial = self.vr_refund_mode.currentIndex()==1
         items = []
+        amount = 0.0
         for r, it in enumerate(self._vr_items_data):
-            w = self.vr_items_table.cellWidget(r, 0)
-            chk = w.findChild(QCheckBox) if w else None
-            if not is_partial or (chk and chk.isChecked()): items.append(it)
-        if not items: QMessageBox.warning(self, "No Items", "Select at least one item."); return
-        amount = sum(it["line_total"] for it in items)
+            spin = self.vr_items_table.cellWidget(r, 2)
+            qty = spin.value() if spin else 0
+            if qty > 0:
+                items.append({"receipt_item_id": it["id"], "quantity": qty})
+                amount += round((it["line_total"] / it["quantity"]) * qty, 2)
+        if not items: QMessageBox.warning(self, "No Items", "Select at least one item with a refund quantity."); return
         mode = "Partial" if is_partial else "Full"
         reply = QMessageBox.question(self, f"Confirm {mode} Refund", f"{mode} refund — ${amount:.2f}\nReason: {reason}\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes: return
         rtype = "partial" if is_partial else "full"
-        if refund_receipt(self._vr_selected_tx_id, self.user["id"], reason, amount, rtype):
-            # Increment stock for refunded items
+        try:
+            ok = refund_receipt(self._vr_selected_tx_id, self.user["id"], reason, items, refund_type=rtype)
+        except ValueError as e:
+            # Reconciliation check caught an over-refund — e.g. two supervisors
+            # working the same receipt at once. Surface it plainly and refresh
+            # so the quantities shown reflect what's actually still refundable.
+            QMessageBox.warning(self, "Cannot Process Refund", str(e))
+            self._vr_on_row_selected()
+            return
+        if ok:
+            # Increment stock for refunded items (using the quantities actually submitted)
             from core.db_config import get_bool
             if get_bool("stock_tracking", False):
                 from core.db_products import increment_stock
-                for it in items:
-                    if it.get("product_id"):
-                        increment_stock(it["product_id"], it["quantity"])
+                by_id = {it["id"]: it for it in self._vr_items_data}
+                for entry in items:
+                    src = by_id.get(entry["receipt_item_id"])
+                    if src and src.get("product_id"):
+                        increment_stock(src["product_id"], entry["quantity"])
             # Print refund receipt
             receipt = get_receipt_by_id(self._vr_selected_tx_id)
             if receipt:
@@ -2027,11 +2078,9 @@ class SupervisorWindow(BaseWindow):
             if not pid and text:
                 results = get_products(search=text, limit=1)
                 if results: pid = results[0]["id"]; inp.setProperty("product_id", pid)
-            if pid:
-                p = get_product_by_id(pid)
-                assignments.append({"slot":slot,"product_id":pid,"product_name":p["name"] if p else text,"product_price":p["selling_price"] if p else 0})
-            else:
-                assignments.append({"slot":slot,"product_id":None,"product_name":None,"product_price":None})
+            # Only slot + product_id are stored — name/price are resolved
+            # live from products.db on every read, never snapshotted here.
+            assignments.append({"slot": slot, "product_id": pid})
         save_quick_keys(assignments)
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
