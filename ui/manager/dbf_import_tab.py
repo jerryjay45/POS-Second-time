@@ -12,8 +12,10 @@ Field mapping:
   group/category → group name (auto-created)
   quantity  → stock (if stock_tracking enabled)
   quan1-3 + pricem1-3 + percent1-3 → discount tiers
-  altcode   → stored as alias barcode note
-  casecost  → flags product as case item
+
+Not currently implemented (present in some DBF exports but not mapped):
+  altcode   → could link to alias_groups (same product, different barcode)
+  casecost  → could flag the row as a case product (is_case)
 """
 
 from __future__ import annotations
@@ -76,7 +78,7 @@ class _ImportWorker(QThread):
 
         from core.db_products import (
             get_product_by_barcode, add_product, update_product,
-            get_groups, add_group, _conn as products_conn,
+            get_groups, add_group,
         )
         from core.db_config import get_bool, get as cfg_get
 
@@ -131,8 +133,8 @@ class _ImportWorker(QThread):
 
             # Inline discount tiers — stored directly on the product row,
             # no global discount_level entries created so the edit form stays clean.
-            inline_disc1_qty = inline_disc1_pct = None
-            inline_disc2_qty = inline_disc2_pct = None
+            inline_discount1_qty = inline_discount1_pct = None
+            inline_discount2_qty = inline_discount2_pct = None
             disc_source = ""   # for the import log note
             if opts.get("import_discounts") and dbf_has_discounts:
                 for tier, qty_key, pct_key, pm_key in [
@@ -156,10 +158,10 @@ class _ImportWorker(QThread):
 
                     if pct > 0:
                         if tier == 1:
-                            inline_disc1_qty, inline_disc1_pct = qty, round(pct, 1)
+                            inline_discount1_qty, inline_discount1_pct = qty, round(pct, 1)
                             disc_source += f"L1:{qty}+@{pct:.1f}% "
                         else:
-                            inline_disc2_qty, inline_disc2_pct = qty, round(pct, 1)
+                            inline_discount2_qty, inline_discount2_pct = qty, round(pct, 1)
                             disc_source += f"L2:{qty}+@{pct:.1f}% "
 
             existing = get_product_by_barcode(barcode)
@@ -178,12 +180,12 @@ class _ImportWorker(QThread):
                 # actually supplied discount data for this product row.
                 # If both are None the DBF had no discount info — leave
                 # any existing values in the DB untouched.
-                if inline_disc1_qty is not None:
-                    kwargs["inline_disc1_qty"] = inline_disc1_qty
-                    kwargs["inline_disc1_pct"] = inline_disc1_pct
-                if inline_disc2_qty is not None:
-                    kwargs["inline_disc2_qty"] = inline_disc2_qty
-                    kwargs["inline_disc2_pct"] = inline_disc2_pct
+                if inline_discount1_qty is not None:
+                    kwargs["inline_discount1_qty"] = inline_discount1_qty
+                    kwargs["inline_discount1_pct"] = inline_discount1_pct
+                if inline_discount2_qty is not None:
+                    kwargs["inline_discount2_qty"] = inline_discount2_qty
+                    kwargs["inline_discount2_pct"] = inline_discount2_pct
 
             try:
                 if existing:
@@ -196,7 +198,7 @@ class _ImportWorker(QThread):
                             if qty != 0:
                                 from core.db_products import adjust_stock
                                 adjust_stock(existing["id"], int(qty),
-                                             "DBF import", user_id=None)
+                                             "DBF import", adjusted_by=None)
                         updated += 1
                         disc_note = disc_source.strip() if opts.get("import_discounts") and disc_source else ""
                         self.row_done.emit({"name": name, "barcode": barcode,
@@ -215,16 +217,16 @@ class _ImportWorker(QThread):
                             selling_price=price,
                             group_id=group_id,
                             gct_applicable=int(gct),
-                            inline_disc1_qty=inline_disc1_qty,
-                            inline_disc1_pct=inline_disc1_pct,
-                            inline_disc2_qty=inline_disc2_qty,
-                            inline_disc2_pct=inline_disc2_pct,
+                            inline_discount1_qty=inline_discount1_qty,
+                            inline_discount1_pct=inline_discount1_pct,
+                            inline_discount2_qty=inline_discount2_qty,
+                            inline_discount2_pct=inline_discount2_pct,
                         )
                         if new_id and track_stock and opts.get("import_stock"):
                             qty = float(r.get("quantity") or 0)
                             if qty > 0:
                                 from core.db_products import adjust_stock
-                                adjust_stock(new_id, int(qty), "DBF import", user_id=None)
+                                adjust_stock(new_id, int(qty), "DBF import", adjusted_by=None)
                         created += 1
                         self.row_done.emit({"name": name, "barcode": barcode,
                                             "status": "created", "reason": ""})
