@@ -509,7 +509,20 @@ _PRODUCT_SELECT = """
            g.name  AS group_name,
            ag.name AS alias_group_name,
            vg.name AS variant_group_name,
-           vg.stock AS variant_group_stock
+           vg.stock AS variant_group_stock,
+           -- Effective cost/price/stock — resolves group precedence
+           -- (variant > alias > own) so callers never need to re-derive this.
+           -- A grouped member's own cost/selling_price/stock columns are
+           -- NOT authoritative; always read the effective_* fields instead.
+           COALESCE(vg.cost, ag.cost, p.cost)                   AS effective_cost,
+           COALESCE(vg.selling_price, ag.selling_price, p.selling_price) AS effective_selling_price,
+           COALESCE(vg.stock, p.stock)                          AS effective_stock,
+           COALESCE(vg.discount_level1_id, ag.discount_level1_id, p.discount_level1_id) AS effective_discount_level1_id,
+           COALESCE(vg.discount_level2_id, ag.discount_level2_id, p.discount_level2_id) AS effective_discount_level2_id,
+           COALESCE(vg.inline_discount1_qty, ag.inline_discount1_qty, p.inline_discount1_qty) AS effective_inline_discount1_qty,
+           COALESCE(vg.inline_discount1_pct, ag.inline_discount1_pct, p.inline_discount1_pct) AS effective_inline_discount1_pct,
+           COALESCE(vg.inline_discount2_qty, ag.inline_discount2_qty, p.inline_discount2_qty) AS effective_inline_discount2_qty,
+           COALESCE(vg.inline_discount2_pct, ag.inline_discount2_pct, p.inline_discount2_pct) AS effective_inline_discount2_pct
     FROM   products p
     LEFT   JOIN groups         g  ON g.id  = p.group_id
     LEFT   JOIN alias_groups   ag ON ag.id = p.alias_group_id
@@ -669,6 +682,56 @@ def cascade_single_cost_to_cases(single_product_id: int) -> list[dict]:
             affected.append({"id": c["id"], "name": c["name"]})
         con.commit()
         return affected
+
+
+def recalculate_all_cases(case_profit_pct: float = None) -> int:
+    """Recalculate cost/selling_price for every case product from its linked
+    source (single product via case_product_id, or variant group via
+    case_variant_group_id). Returns count of case products updated.
+
+    Skips case products with no link or a zero-cost source — same rule
+    the per-link cascade functions use.
+    """
+    if case_profit_pct is None:
+        from core.db_config import get as cfg_get
+        try:
+            case_profit_pct = float(cfg_get("case_profit_pct", "0.10"))
+        except (ValueError, TypeError):
+            case_profit_pct = 0.10
+
+    with _conn() as con:
+        cases = con.execute(
+            """SELECT id, case_qty, case_product_id, case_variant_group_id
+               FROM products WHERE is_case = 1"""
+        ).fetchall()
+
+        updated = 0
+        for c in cases:
+            qty = c["case_qty"] or 1
+            source_cost = None
+            if c["case_product_id"]:
+                row = con.execute(
+                    "SELECT cost FROM products WHERE id = ?", (c["case_product_id"],)
+                ).fetchone()
+                source_cost = row["cost"] if row else None
+            elif c["case_variant_group_id"]:
+                row = con.execute(
+                    "SELECT cost FROM variant_groups WHERE id = ?", (c["case_variant_group_id"],)
+                ).fetchone()
+                source_cost = row["cost"] if row else None
+
+            if not source_cost or source_cost <= 0:
+                continue
+
+            case_cost = round(source_cost * qty, 4)
+            case_price = round(case_cost * (1 + case_profit_pct), 2)
+            con.execute(
+                "UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now') WHERE id = ?",
+                (case_cost, case_price, c["id"])
+            )
+            updated += 1
+        con.commit()
+        return updated
 
 
 # ── Stock ─────────────────────────────────────────────────────────────────────
