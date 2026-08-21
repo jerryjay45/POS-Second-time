@@ -585,7 +585,7 @@ class CashierWindow(BaseWindow):
         else:
             for p in results:
                 tag = "  [GCT]" if p["gct_applicable"] else "  [No GCT]"
-                item = QListWidgetItem(f"  {p['name']}  —  ${p['selling_price']:.2f}{tag}")
+                item = QListWidgetItem(f"  {p['name']}  —  ${p['effective_selling_price']:.2f}{tag}")
                 item.setData(Qt.ItemDataRole.UserRole, p)
                 self.results_list.addItem(item)
             n = len(results)
@@ -623,9 +623,12 @@ class CashierWindow(BaseWindow):
 
     def _add_to_cart(self, product: dict, qty: int = 1):
         pid   = product["id"]
-        price = product["selling_price"]
+        # effective_* resolves group precedence (variant > alias > own) —
+        # a variant/alias-group member's own selling_price/cost/discount
+        # columns are not authoritative, so this must never read those directly.
+        price = product["effective_selling_price"]
         gct   = round(price * self._gct_rate, 2) if product["gct_applicable"] else 0.0
-        cost  = product.get("cost", 0.0)
+        cost  = product.get("effective_cost", 0.0)
 
         # Merge if already in cart
         for item in self.cart:
@@ -642,12 +645,12 @@ class CashierWindow(BaseWindow):
             "cost":             cost,
             "gct":              gct,
             "gct_applicable":   product["gct_applicable"],
-            "disc_level_id":    product.get("discount_level1"),
-            "disc_level2_id":   product.get("discount_level2"),
-            "inline_disc1_qty": product.get("inline_disc1_qty"),
-            "inline_disc1_pct": product.get("inline_disc1_pct"),
-            "inline_disc2_qty": product.get("inline_disc2_qty"),
-            "inline_disc2_pct": product.get("inline_disc2_pct"),
+            "disc_level_id":    product.get("effective_discount_level1_id"),
+            "disc_level2_id":   product.get("effective_discount_level2_id"),
+            "inline_disc1_qty": product.get("effective_inline_discount1_qty"),
+            "inline_disc1_pct": product.get("effective_inline_discount1_pct"),
+            "inline_disc2_qty": product.get("effective_inline_discount2_qty"),
+            "inline_disc2_pct": product.get("effective_inline_discount2_pct"),
             "discount_applied": 0.0,
             "total":            round((price + gct) * qty, 2),
             "barcode":          product["barcode"],
@@ -659,7 +662,7 @@ class CashierWindow(BaseWindow):
 
         # Low stock warning
         if self._low_stock_warning:
-            stock = product.get("stock", 0)
+            stock = product.get("effective_stock", 0)
             if stock <= self._low_stock_threshold:
                 self._show_low_stock_banner(product["name"], stock)
 
@@ -739,8 +742,8 @@ class CashierWindow(BaseWindow):
         disc_pct = 0.0
 
         # Named discount levels (global, editable in settings)
-        lvl1_id = item.get("disc_level_id") or item.get("discount_level1")
-        lvl2_id = item.get("disc_level2_id") or item.get("discount_level2")
+        lvl1_id = item.get("disc_level_id")
+        lvl2_id = item.get("disc_level2_id")
         lvl1 = rules.get(lvl1_id)
         lvl2 = rules.get(lvl2_id)
 
@@ -1095,39 +1098,28 @@ class CashierWindow(BaseWindow):
         return get_quick_keys()
 
     def _load_discount_rules(self) -> dict:
-        """Return {level_id: {min_qty, pct}} for named levels,
-        and store per-product inline rules separately."""
+        """Return {level_id: {min_qty, pct}} for named discount levels.
+
+        Routes through db_products.py instead of raw SQL. Named
+        discount_levels store percent as a FRACTION (0.05 = 5%) —
+        converted to a raw percent number here (5.0) so it matches
+        the /100 math in _apply_discount, which inline discount
+        fields already use directly (they're stored as raw percent
+        from the DBF-import convention — see dbf_import_tab.py).
+
+        Note: the old version also built a self._inline_disc_rules
+        dict via a second raw-SQL query, but nothing in this file ever
+        read it — inline discount data flows through each cart item's
+        own inline_disc1/2_qty/pct keys (set in _add_to_cart from the
+        product's effective_inline_discount* fields), not from a
+        separate lookup table. Dropped that dead computation.
+        """
         try:
-            import sqlite3
-            from config import DB_PRODUCTS
-            con = sqlite3.connect(DB_PRODUCTS)
-            con.row_factory = sqlite3.Row
-            # Named global discount levels
-            rows = con.execute(
-                "SELECT id, min_quantity, discount_percent FROM discount_levels"
-            ).fetchall()
-            rules = {r[0]: {"min_qty": r[1], "pct": r[2]} for r in rows}
-            # Per-product inline discount rules
-            inline = con.execute(
-                "SELECT id, inline_disc1_qty, inline_disc1_pct, "
-                "inline_disc2_qty, inline_disc2_pct FROM products "
-                "WHERE inline_disc1_qty IS NOT NULL OR inline_disc2_qty IS NOT NULL"
-            ).fetchall()
-            self._inline_disc_rules = {}
-            for r in inline:
-                tiers = []
-                if r["inline_disc1_qty"] and r["inline_disc1_pct"]:
-                    tiers.append({"min_qty": r["inline_disc1_qty"],
-                                  "pct": r["inline_disc1_pct"]})
-                if r["inline_disc2_qty"] and r["inline_disc2_pct"]:
-                    tiers.append({"min_qty": r["inline_disc2_qty"],
-                                  "pct": r["inline_disc2_pct"]})
-                if tiers:
-                    self._inline_disc_rules[r["id"]] = tiers
-            con.close()
-            return rules
+            from core.db_products import get_discount_levels
+            levels = get_discount_levels()
+            return {lvl["id"]: {"min_qty": lvl["min_qty"], "pct": lvl["percent"] * 100}
+                    for lvl in levels}
         except Exception:
-            self._inline_disc_rules = {}
             return {}
 
     def _reload_discount_rules(self):
