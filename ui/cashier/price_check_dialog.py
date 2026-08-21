@@ -253,7 +253,7 @@ class PriceCheckDialog(QDialog):
         # Populate result frame
         self.result_name.setText(product["name"])
 
-        price = product["selling_price"]
+        price = product["effective_selling_price"]
         self.result_price.setText(f"${price:.2f}")
 
         # GCT info
@@ -264,11 +264,11 @@ class PriceCheckDialog(QDialog):
             self.result_gct.setText("No GCT applicable")
 
         # Stock info
-        stock = product.get("stock", 0)
+        stock = product.get("effective_stock", 0)
         self.result_stock.setText(f"Stock: {stock} unit{'s' if stock != 1 else ''}")
 
         # Cost/margin if available
-        cost = product.get("cost", 0)
+        cost = product.get("effective_cost", 0)
         if cost > 0:
             margin = price - cost
             margin_pct = (margin / cost * 100) if cost > 0 else 0
@@ -291,7 +291,7 @@ class PriceCheckDialog(QDialog):
 
         for p in results:
             tag = "  [GCT]" if p.get("gct_applicable") else "  [No GCT]"
-            item_text = f"{p['name']}  —  ${p['selling_price']:.2f}{tag}"
+            item_text = f"{p['name']}  —  ${p['effective_selling_price']:.2f}{tag}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, p)
             self.results_list.addItem(item)
