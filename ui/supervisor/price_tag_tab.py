@@ -408,33 +408,35 @@ class PriceTagTab(QWidget):
             tbl.setItem(row, 1, ni)
 
             pi = QTableWidgetItem(
-                f"{currency}{p['selling_price']:.2f}"
+                f"{currency}{p['effective_selling_price']:.2f}"
                 + (" +GCT" if p.get("gct_applicable") else ""))
             pi.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             f = pi.font(); f.setBold(True); pi.setFont(f)
             pi.setForeground(QColor(AMBER_DARK)); tbl.setItem(row, 2, pi)
 
-            # Build disc_rows
+            # Build disc_rows — read the effective_* discount fields so a
+            # variant/alias-group member shows the group's discount setup,
+            # not its own (non-authoritative) columns.
             disc_rows = []
             for lvl_key, qty_key, pct_key in [
-                ("discount_level1", None, None),
-                ("discount_level2", None, None),
-                (None, "inline_disc1_qty", "inline_disc1_pct"),
-                (None, "inline_disc2_qty", "inline_disc2_pct"),
+                ("effective_discount_level1_id", None, None),
+                ("effective_discount_level2_id", None, None),
+                (None, "effective_inline_discount1_qty", "effective_inline_discount1_pct"),
+                (None, "effective_inline_discount2_qty", "effective_inline_discount2_pct"),
             ]:
                 if lvl_key:
                     lid = p.get(lvl_key)
                     if lid and lid in disc_levels:
                         dl  = disc_levels[lid]
-                        qty = dl.get("min_quantity") or 0
-                        pct = dl.get("discount_percent") or 0.0
+                        qty = dl.get("min_qty") or 0
+                        pct = (dl.get("percent") or 0.0) * 100  # stored as fraction (0.05 = 5%)
                         if qty and pct:
-                            disc_rows.append((qty, round(p["selling_price"]*(1-pct/100), 2),
+                            disc_rows.append((qty, round(p["effective_selling_price"]*(1-pct/100), 2),
                                               f"{pct:.0f}%"))
                 else:
                     qty = p.get(qty_key); pct = p.get(pct_key)
                     if qty and pct:
-                        disc_rows.append((qty, round(p["selling_price"]*(1-pct/100), 2),
+                        disc_rows.append((qty, round(p["effective_selling_price"]*(1-pct/100), 2),
                                           f"{pct:.0f}%"))
             seen = set(); deduped = []
             for dr in sorted(disc_rows, key=lambda r: r[0]):
@@ -462,7 +464,7 @@ class PriceTagTab(QWidget):
             self._prod_data[pid] = {
                 "name":           p["name"],
                 "barcode":        p.get("barcode", ""),
-                "price":          p["selling_price"],
+                "price":          p["effective_selling_price"],
                 "gct_applicable": bool(p.get("gct_applicable")),
                 "disc_rows":      disc_rows,
             }
