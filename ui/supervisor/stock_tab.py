@@ -19,8 +19,7 @@ from core.db_products import (
     get_products, count_products, adjust_stock,
     get_all_stock_adjustments, get_low_stock_products,
     get_stock_adjustments, get_product_by_id,
-    get_case_groups, get_case_group_by_id,
-    adjust_case_group_stock, get_low_stock_case_groups,
+    get_variant_groups, adjust_variant_group_stock, get_low_stock_variant_groups,
 )
 from core.db_config import get_int
 from core.db_users import get_user_by_id
@@ -329,7 +328,7 @@ class StockTab(QWidget):
         splitter.setStretchFactor(0, 1); splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, stretch=1)
 
-        # ── Case Pool section — hidden when no case groups exist ──────
+        # ── Variant Group Stock section — hidden when no variant groups exist ──
         self.pool_section = QFrame()
         self.pool_section.setStyleSheet(
             f"QFrame{{background:{WHITE};border:1px solid {BORDER};border-radius:10px;}}"
@@ -338,7 +337,7 @@ class StockTab(QWidget):
         pl.setContentsMargins(12, 10, 12, 10); pl.setSpacing(8)
 
         pool_hdr = QHBoxLayout()
-        pool_title = QLabel("📦  Case Pool Stock")
+        pool_title = QLabel("🔗  Variant Group Stock")
         pool_title.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:700;background:transparent;")
         pool_hdr.addWidget(pool_title)
         pool_hdr.addStretch()
@@ -354,18 +353,20 @@ class StockTab(QWidget):
         pool_hdr.addWidget(self.pool_refresh_btn)
         pl.addLayout(pool_hdr)
 
-        self.pool_table = QTableWidget(); self.pool_table.setColumnCount(5)
+        # 4 columns now — "Case Qty" dropped: units-per-case lives on each
+        # case PRODUCT (case_qty), not on the variant group itself, since a
+        # group can be the source for multiple differently-sized cases.
+        self.pool_table = QTableWidget(); self.pool_table.setColumnCount(4)
         self.pool_table.setHorizontalHeaderLabels(
-            ["Group Name", "Case Qty", "Pool Stock", "Add Cases", "Remove Cases"]
+            ["Group Name", "Stock", "Add Stock", "Remove Stock"]
         )
         ph = self.pool_table.horizontalHeader()
         ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         ph.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         ph.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.pool_table.setColumnWidth(2, 140)
         self.pool_table.setColumnWidth(3, 140)
-        self.pool_table.setColumnWidth(4, 140)
         self.pool_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pool_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.pool_table.verticalHeader().setVisible(False)
@@ -387,7 +388,7 @@ class StockTab(QWidget):
 
     def _refresh_alert(self):
         low = get_low_stock_products(self._threshold)
-        low_pool = get_low_stock_case_groups(self._threshold)
+        low_pool = get_low_stock_variant_groups(self._threshold)
         if not low and not low_pool:
             self.alert_frame.setVisible(False); return
         out  = [p for p in low if p["stock"] == 0]
@@ -395,7 +396,7 @@ class StockTab(QWidget):
         parts = []
         if out:       parts.append(f"{len(out)} out of stock")
         if warn:      parts.append(f"{len(warn)} low (≤{self._threshold})")
-        if low_pool:  parts.append(f"{len(low_pool)} case pool{'s' if len(low_pool) != 1 else ''} low")
+        if low_pool:  parts.append(f"{len(low_pool)} variant group{'s' if len(low_pool) != 1 else ''} low")
         names = ", ".join(p["name"] for p in low[:4])
         if low_pool:
             names += (", " if names else "") + ", ".join(g["name"] for g in low_pool[:2])
@@ -404,8 +405,8 @@ class StockTab(QWidget):
         self.alert_frame.setVisible(True)
 
     def _load_pool_table(self):
-        """Populate the Case Pool section. Hide section if no case groups exist."""
-        groups = get_case_groups()
+        """Populate the Variant Group Stock section. Hidden if none exist."""
+        groups = get_variant_groups()
         if not groups:
             self.pool_section.setVisible(False)
             return
@@ -421,19 +422,15 @@ class StockTab(QWidget):
             name_item.setData(Qt.ItemDataRole.UserRole, g["id"])
             self.pool_table.setItem(row, 0, name_item)
 
-            qty_item = QTableWidgetItem(str(g.get("case_qty") or "—"))
-            qty_item.setTextAlignment(C)
-            self.pool_table.setItem(row, 1, qty_item)
-
-            pool  = g.get("pool_stock", 0)
-            color = RED if pool == 0 else (AMBER_DARK if pool <= self._threshold else GREEN)
-            label = "Out" if pool == 0 else (f"{pool} ⚠" if pool <= self._threshold else str(pool))
+            stock = g.get("stock", 0)
+            color = RED if stock == 0 else (AMBER_DARK if stock <= self._threshold else GREEN)
+            label = "Out" if stock == 0 else (f"{stock} ⚠" if stock <= self._threshold else str(stock))
             si = QTableWidgetItem(label)
             si.setForeground(QColor(color)); si.setTextAlignment(C)
             f = QFont(); f.setBold(True); si.setFont(f)
-            self.pool_table.setItem(row, 2, si)
+            self.pool_table.setItem(row, 1, si)
 
-            # Add Cases widget
+            # Add Stock widget
             add_w = QWidget(); add_l = QHBoxLayout(add_w)
             add_l.setContentsMargins(4, 2, 4, 2); add_l.setSpacing(4)
             add_spin = QSpinBox(); add_spin.setMinimum(1); add_spin.setMaximum(9999)
@@ -457,9 +454,9 @@ class StockTab(QWidget):
                 lambda _, gid=gid, sp=add_spin: self._pool_adjust(gid, sp.value(), uid)
             )
             add_l.addWidget(add_spin); add_l.addWidget(add_btn)
-            self.pool_table.setCellWidget(row, 3, add_w)
+            self.pool_table.setCellWidget(row, 2, add_w)
 
-            # Remove Cases widget
+            # Remove Stock widget
             rem_w = QWidget(); rem_l = QHBoxLayout(rem_w)
             rem_l.setContentsMargins(4, 2, 4, 2); rem_l.setSpacing(4)
             rem_spin = QSpinBox(); rem_spin.setMinimum(1); rem_spin.setMaximum(9999)
@@ -481,11 +478,11 @@ class StockTab(QWidget):
                 lambda _, gid=gid, sp=rem_spin: self._pool_adjust(gid, -sp.value(), uid)
             )
             rem_l.addWidget(rem_spin); rem_l.addWidget(rem_btn)
-            self.pool_table.setCellWidget(row, 4, rem_w)
+            self.pool_table.setCellWidget(row, 3, rem_w)
 
     def _pool_adjust(self, group_id: int, delta: int, user_id: int):
         reason = "Restock" if delta > 0 else "Correction"
-        adjust_case_group_stock(group_id, delta, reason, user_id)
+        adjust_variant_group_stock(group_id, delta, reason, user_id)
         self._load_pool_table()
         self._refresh_alert()
 
@@ -529,7 +526,7 @@ class StockTab(QWidget):
             grp.setForeground(QColor(MUTED)); grp.setTextAlignment(C)
             self.stock_table.setItem(row, 1, grp)
 
-            stock = p.get("stock", 0)
+            stock = p.get("effective_stock", 0)
             color = _stock_color(stock, self._threshold)
             label = "Out" if stock == 0 else (f"{stock} ⚠" if stock <= self._threshold else str(stock))
             si = QTableWidgetItem(label)
@@ -565,12 +562,17 @@ class StockTab(QWidget):
         self._selected_product_id   = product_id
         self._selected_product_name = product_name
         p = get_product_by_id(product_id)
-        stock = p["stock"] if p else 0
+        stock = p["effective_stock"] if p else 0
         color = _stock_color(stock, self._threshold)
         self.adj_title.setText(product_name)
         self.adj_stock_lbl.setText(
             f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span>"
         )
+        if p and p.get("variant_group_id"):
+            self.adj_stock_lbl.setText(
+                f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span> "
+                f"(shared with {p.get('variant_group_name', 'variant group')})"
+            )
         self.adj_stock_lbl.setTextFormat(Qt.TextFormat.RichText)
         self.adj_qty.setValue(1)
         self.adj_reason.setCurrentIndex(0)
