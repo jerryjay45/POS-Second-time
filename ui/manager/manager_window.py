@@ -188,9 +188,10 @@ class ManagerWindow(SupervisorWindow):
         self.tabs.addTab(self._build_products_tab(),     "📦  Products")
         self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
         self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
-        from ui.supervisor.void_refund_tab import VoidRefundTab
-        self._void_refund_tab = VoidRefundTab(user=self.user, parent=self)
-        self.tabs.addTab(self._void_refund_tab,          "↩  Void / Refund")
+        # void_refund_tab.py was retired — reuse the same inline void/refund
+        # tab-builder inherited from SupervisorWindow (already reworked to
+        # use per-item quantity refunds against the fixed reconciliation logic).
+        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
         self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
         self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
         self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
@@ -1143,29 +1144,36 @@ class ManagerWindow(SupervisorWindow):
             self.biz_feedback.setText(str(e))
 
     def _load_discount_levels(self):
+        """Load the first two discount_levels rows (by min_qty) into the
+        two editor rows. Routes through db_products.py instead of raw SQL —
+        also fixes the old code's silent no-op on a fresh install where
+        no rows exist yet (see _save_discount_levels, which now creates
+        them on first save)."""
         try:
-            import sqlite3; from config import DB_PRODUCTS
-            con = sqlite3.connect(DB_PRODUCTS)
-            rows = con.execute("SELECT discount_percent, min_quantity FROM discount_levels ORDER BY min_quantity LIMIT 2").fetchall()
-            con.close()
-            for i, (pct, qty) in enumerate(rows):
+            from core.db_products import get_discount_levels
+            levels = get_discount_levels()  # ordered by min_qty ascending
+            for i, lvl in enumerate(levels[:2]):
                 if i < len(self._disc_rows):
-                    self._disc_rows[i][0].setValue(pct)
-                    self._disc_rows[i][1].setValue(qty)
-        except Exception: pass
+                    self._disc_rows[i][0].setValue(lvl["percent"] * 100)  # fraction -> display %
+                    self._disc_rows[i][1].setValue(lvl["min_qty"])
+        except Exception:
+            pass
 
     def _save_discount_levels(self):
-        try:
-            import sqlite3; from config import DB_PRODUCTS
-            con = sqlite3.connect(DB_PRODUCTS)
-            rows = con.execute("SELECT id FROM discount_levels ORDER BY min_quantity LIMIT 2").fetchall()
-            for i, (did,) in enumerate(rows):
-                if i < len(self._disc_rows):
-                    pct = self._disc_rows[i][0].value()
-                    qty = self._disc_rows[i][1].value()
-                    con.execute("UPDATE discount_levels SET discount_percent=?, min_quantity=? WHERE id=?", (pct, qty, did))
-            con.commit(); con.close()
-        except Exception: pass
+        """Save the two editor rows to discount_levels. Updates existing
+        rows if present, otherwise creates them — so this works correctly
+        on a fresh install where the table starts empty, unlike the old
+        raw-SQL version which only ever UPDATEd and silently did nothing
+        if no rows existed."""
+        from core.db_products import get_discount_levels, add_discount_level, update_discount_level
+        levels = get_discount_levels()
+        for i, (pct_spin, qty_spin) in enumerate(self._disc_rows):
+            pct = pct_spin.value() / 100  # display % -> stored fraction
+            qty = qty_spin.value()
+            if i < len(levels):
+                update_discount_level(levels[i]["id"], min_qty=qty, percent=pct)
+            else:
+                add_discount_level(f"Level {i + 1}", qty, pct)
 
     def _load_groups(self):
         self.groups_table.setRowCount(0)
@@ -1216,7 +1224,7 @@ class ManagerWindow(SupervisorWindow):
         hint = QLabel("Assign a product to each F-key (F1–F8). Start typing a product name to search — select from the results.")
         hint.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;"); lay.addWidget(hint)
 
-        all_prods = [(p["id"], p["name"], p["selling_price"]) for p in get_products(limit=5000)]
+        all_prods = [(p["id"], p["name"], p["effective_selling_price"]) for p in get_products(limit=5000)]
         self._qk_widgets = []
         for k in get_quick_keys():
             row = QHBoxLayout(); row.setSpacing(10)
@@ -1239,13 +1247,9 @@ class ManagerWindow(SupervisorWindow):
         assignments = []
         for sw in self._qk_widgets:
             slot = sw.property("slot"); pid = sw.currentData()
-            if pid:
-                p = get_product_by_id(pid)
-                assignments.append({"slot":slot,"product_id":pid,
-                                     "product_name":p["name"] if p else "",
-                                     "product_price":p["selling_price"] if p else 0})
-            else:
-                assignments.append({"slot":slot,"product_id":None,"product_name":None,"product_price":None})
+            # Only slot + product_id are stored — name/price are resolved
+            # live from products.db on every read, never snapshotted here.
+            assignments.append({"slot": slot, "product_id": pid})
         save_quick_keys(assignments)
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
