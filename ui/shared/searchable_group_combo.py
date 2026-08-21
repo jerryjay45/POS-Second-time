@@ -14,7 +14,10 @@ from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, BORDER, DARK_CARD,
     GREEN, LABEL_TEXT, MUTED, RED, WARM_WHITE, WHITE
 )
-from core.db_products import get_price_groups, add_price_group
+from core.db_products import (
+    get_alias_groups, add_alias_group,
+    get_variant_groups, add_variant_group,
+)
 
 
 class SearchableGroupCombo(QWidget):
@@ -32,11 +35,21 @@ class SearchableGroupCombo(QWidget):
         type_ : 'alias' or 'variant'
         """
         super().__init__(parent)
+        assert type_ in ("alias", "variant"), f"unknown group type: {type_}"
         self._type        = type_
         self._selected_id = None
         self._selected_nm = ""
         self._popup_open  = False
         self._build()
+
+    # ── Type dispatch — alias_groups and variant_groups are separate
+    #    tables now, not one price_groups table with a type flag ────────
+
+    def _get_groups(self) -> list[dict]:
+        return get_alias_groups() if self._type == "alias" else get_variant_groups()
+
+    def _add_group(self, name: str) -> int:
+        return add_alias_group(name) if self._type == "alias" else add_variant_group(name)
 
     # ── Build ─────────────────────────────────────────────────────────
 
@@ -175,7 +188,7 @@ class SearchableGroupCombo(QWidget):
                 f"color: {DARK_CARD}", f"color: {MUTED}"
             ))
             return
-        for pg in get_price_groups(type_=self._type):
+        for pg in self._get_groups():
             if pg["id"] == group_id:
                 self._selected_id = group_id
                 self._selected_nm = pg["name"]
@@ -210,7 +223,7 @@ class SearchableGroupCombo(QWidget):
         none_item.setData(Qt.ItemDataRole.UserRole, None)
         none_item.setForeground(QColor(MUTED))
         self._list.addItem(none_item)
-        for pg in get_price_groups(type_=self._type):
+        for pg in self._get_groups():
             if filter_text and filter_text not in pg["name"]:
                 continue
             item = QListWidgetItem(pg["name"])
@@ -248,13 +261,18 @@ class SearchableGroupCombo(QWidget):
             if not ok or not name.strip():
                 return
             name = name.strip().upper()
-        # Check for duplicate
-        existing = [pg["name"] for pg in get_price_groups(type_=self._type)]
+        # Check for duplicate — also guards against the UNIQUE constraint
+        # on alias_groups.name / variant_groups.name raising instead
+        existing = [pg["name"] for pg in self._get_groups()]
         if name in existing:
             QMessageBox.warning(self, "Duplicate",
                 f"A {self._type} group named \"{name}\" already exists.")
             return
-        gid = add_price_group(name, self._type)
+        try:
+            gid = self._add_group(name)
+        except ValueError as e:
+            QMessageBox.warning(self, "Duplicate", str(e))
+            return
         self._selected_id = gid
         self._selected_nm = name
         self._trigger.setText(name)
