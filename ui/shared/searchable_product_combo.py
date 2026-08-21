@@ -191,10 +191,14 @@ class SearchableProductCombo(QWidget):
         if not text:
             return
         results = get_products(search=text, limit=self._LIMIT)
-        # Filter out cases and the excluded product
+        # Filter out cases, variant-group members (they have no stock of
+        # their own to link a case to — use the variant-group picker
+        # instead), and the excluded product.
         results = [
             p for p in results
-            if not p["is_case"] and p["id"] != self._exclude_id
+            if not p["is_case"]
+            and not p["variant_group_id"]
+            and p["id"] != self._exclude_id
         ]
         self._list.clear()
         self._populate_none_item()
@@ -207,10 +211,12 @@ class SearchableProductCombo(QWidget):
                 + (f" (showing first {self._LIMIT})" if shown == self._LIMIT else "")
             )
             for p in results:
-                item = QListWidgetItem(f"{p['name']}  (${p['cost']:.2f})")
+                # Alias-group members DO keep their own stock but share cost
+                # with the group — show effective_cost so it's never stale.
+                item = QListWidgetItem(f"{p['name']}  (${p['effective_cost']:.2f})")
                 item.setData(Qt.ItemDataRole.UserRole, p["id"])
                 item.setData(Qt.ItemDataRole.UserRole + 1, p["name"])
-                item.setData(Qt.ItemDataRole.UserRole + 2, p["cost"])
+                item.setData(Qt.ItemDataRole.UserRole + 2, p["effective_cost"])
                 if p["id"] == self._selected_id:
                     item.setSelected(True)
                 self._list.addItem(item)
