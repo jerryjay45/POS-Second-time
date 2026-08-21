@@ -280,6 +280,18 @@ def get_session_receipts(session_id: int) -> list[dict]:
 
 # ── Refund reconciliation core ──────────────────────────────────────────────
 
+def get_remaining_refundable_qty(receipt_item_id: int) -> int:
+    """Public helper for the UI: how many units of this receipt line are
+    still eligible to be refunded (original quantity minus everything
+    already refunded/voided/exchanged against it, across all past actions)."""
+    with _conn() as con:
+        ri = con.execute(
+            "SELECT quantity FROM receipt_items WHERE id = ?", (receipt_item_id,)
+        ).fetchone()
+        if not ri:
+            return 0
+        return max(0, ri["quantity"] - get_refunded_quantity(con, receipt_item_id))
+
 def get_refunded_quantity(con, receipt_item_id: int) -> int:
     """Total quantity already refunded against a specific receipt_items row,
     across all past void/refund/exchange actions."""
@@ -355,7 +367,14 @@ def _insert_refund(con, receipt_id: int, user_id: int, refund_type: str,
 
 def void_receipt(receipt_id: int, user_id: int, reason: str) -> bool:
     """Void a completed receipt. Automatically builds item-level refund_items
-    for every line on the receipt (a void cancels the whole sale)."""
+    for every line on the receipt (a void cancels the whole sale).
+
+    Requests each line's REMAINING unrefunded quantity, not its original
+    quantity — a receipt.status of 'completed' normally means nothing's
+    been refunded yet, but this keeps void_receipt() safe to call even in
+    an edge case where a line was already partially refunded first. Lines
+    with nothing left to void are simply skipped rather than raising.
+    """
     with _conn() as con:
         cur = con.execute(
             "UPDATE receipts SET status='voided' WHERE id=? AND status='completed'",
@@ -367,7 +386,19 @@ def void_receipt(receipt_id: int, user_id: int, reason: str) -> bool:
         lines = con.execute(
             "SELECT id, quantity FROM receipt_items WHERE receipt_id = ?", (receipt_id,)
         ).fetchall()
-        requested = [{"receipt_item_id": r["id"], "quantity": r["quantity"]} for r in lines]
+        requested = []
+        for r in lines:
+            remaining = r["quantity"] - get_refunded_quantity(con, r["id"])
+            if remaining > 0:
+                requested.append({"receipt_item_id": r["id"], "quantity": remaining})
+
+        if not requested:
+            # Nothing left to void (everything already refunded) — still
+            # mark the receipt voided since that update already committed
+            # conceptually; just no new refund_items to add.
+            con.commit()
+            return True
+
         priced = _validate_and_price_items(con, requested)
         _insert_refund(con, receipt_id, user_id, "void", reason, priced)
         con.commit()
