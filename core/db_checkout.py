@@ -27,7 +27,7 @@ what was actually sold).
 
 Soft (undeclared, cross-file) references — documented, not DB-enforced:
   receipts.user_id, receipts.session_id -> users.db
-  receipt_items.product_id              -> products.db
+  receipt_items.product_id              -> products.db (NULL for misc/one-off items)
   refunds.user_id                       -> users.db
   refund_items.exchange_for_product_id  -> products.db
 These rely on the UI only ever offering valid IDs (search/dropdown-driven
@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE TABLE IF NOT EXISTS receipt_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_id      INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
-    product_id      INTEGER NOT NULL,   -- soft ref, products.db
+    product_id      INTEGER,            -- soft ref, products.db — NULL for
+                                         -- misc/one-off items with no product record
     barcode         TEXT    NOT NULL,
     product_name    TEXT    NOT NULL,
     quantity        INTEGER NOT NULL DEFAULT 1,
