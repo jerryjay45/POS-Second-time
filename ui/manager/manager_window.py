@@ -18,6 +18,7 @@ from PyQt6.QtCore  import Qt, QEvent, pyqtSignal
 from PyQt6.QtGui   import QColor, QDoubleValidator
 
 from ui.supervisor.supervisor_window import SupervisorWindow
+from utils.currency import format_currency
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, AMBER_BG,
     DARK, DARK_2, DARK_4, DARK_CARD,
@@ -93,8 +94,8 @@ class ProductSearchWidget(QWidget):
         self.lst.clear()
         if matches:
             for pid, name, price in matches:
-                item = QListWidgetItem(f"{name}  —  ${price:.2f}")
-                item.setData(Qt.ItemDataRole.UserRole, (pid, f"{name}  (${price:.2f})"))
+                item = QListWidgetItem(f"{name}  —  {format_currency(price)}")
+                item.setData(Qt.ItemDataRole.UserRole, (pid, f"{name}  ({format_currency(price)})"))
                 self.lst.addItem(item)
         else:
             no = QListWidgetItem("  No products found"); no.setForeground(QColor(MUTED))
@@ -1233,7 +1234,7 @@ class ManagerWindow(SupervisorWindow):
             badge.setStyleSheet(f"background:{DARK_CARD};color:{AMBER};border-radius:6px;font-size:11px;font-weight:700;")
             sw = ProductSearchWidget(); sw.set_products(all_prods)
             if k.get("product_id") and k.get("product_name"):
-                sw.set_selection(k["product_id"], f"{k['product_name']}  (${k['product_price']:.2f})")
+                sw.set_selection(k["product_id"], f"{k['product_name']}  ({format_currency(k['product_price'])})")
             sw.setProperty("slot", k["slot"])
             row.addWidget(badge); row.addWidget(sw, stretch=1)
             lay.addLayout(row); self._qk_widgets.append(sw)
