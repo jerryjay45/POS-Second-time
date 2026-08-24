@@ -25,6 +25,7 @@ from ui.shared.theme import (
     MUTED, LABEL_TEXT, GREEN, GREEN_LIGHT,
 )
 from core.db_products import get_products, count_products, get_discount_levels
+from utils.currency import format_currency
 from core.db_config import get as cfg_get, gct_rate
 from config import LABEL_DIR
 
@@ -106,7 +107,7 @@ def _draw_label(painter: QPainter, rect: QRectF,
         cur_y += name_h
 
     if show_price:
-        price_str = f"${price:.2f}"
+        price_str = format_currency(price)
         font = QFont("Arial"); font.setPointSizeF(price_pt); font.setBold(True)
         painter.setFont(font); painter.setPen(QColor("#000000"))
         price_px = painter.fontMetrics().horizontalAdvance(price_str)
@@ -127,7 +128,7 @@ def _draw_label(painter: QPainter, rect: QRectF,
             tr = QRectF(x + pad, cur_y, w - pad * 2, disc_h_each)
             painter.setPen(QColor("#000000"))
             painter.drawText(tr, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                             f"BUY {min_qty} GET 1 FOR ${disc_price:.2f}")
+                             f"BUY {min_qty} GET 1 FOR {format_currency(disc_price)}")
             cur_y += disc_h_each
 
     if show_barcode and barcode:
@@ -408,7 +409,7 @@ class PriceTagTab(QWidget):
             tbl.setItem(row, 1, ni)
 
             pi = QTableWidgetItem(
-                f"{currency}{p['effective_selling_price']:.2f}"
+                format_currency(p['effective_selling_price'], symbol=currency)
                 + (" +GCT" if p.get("gct_applicable") else ""))
             pi.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             f = pi.font(); f.setBold(True); pi.setFont(f)
