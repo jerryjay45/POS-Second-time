@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui  import QDoubleValidator
+from utils.currency import format_currency
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, AMBER_LIGHT,
@@ -81,10 +82,10 @@ class CheckoutDialog(QDialog):
         strip.setStyleSheet(f"background:{AMBER_LIGHTEST};border-bottom:1px solid #e8e0cc;")
         sl = QHBoxLayout(strip); sl.setContentsMargins(0, 0, 0, 0)
         for lbl_txt, val_txt, grand in [
-            ("Subtotal",  f"${self.subtotal:.2f}",  False),
-            ("GCT",       f"${self.gct_total:.2f}", False),
-            ("Discount",  f"${self.discount:.2f}",  False),
-            ("Total Due", f"${self.total:.2f}",      True),
+            ("Subtotal",  format_currency(self.subtotal),  False),
+            ("GCT",       format_currency(self.gct_total), False),
+            ("Discount",  format_currency(self.discount),  False),
+            ("Total Due", format_currency(self.total),      True),
         ]:
             item = QFrame(); il = QVBoxLayout(item)
             il.setContentsMargins(0, 8, 0, 8); il.setSpacing(1)
@@ -323,7 +324,7 @@ class CheckoutDialog(QDialog):
             )
             self._confirm_btn.setEnabled(False)
         elif change < 0:
-            self._change_val.setText(f"-${abs(change):.2f}")
+            self._change_val.setText(f"-{format_currency(abs(change))}")
             self._change_val.setStyleSheet(
                 f"font-size:20px;font-weight:800;color:{RED};"
                 "font-family:'DM Mono',monospace;"
@@ -334,7 +335,7 @@ class CheckoutDialog(QDialog):
             )
             self._confirm_btn.setEnabled(False)
         else:
-            self._change_val.setText(f"${change:.2f}")
+            self._change_val.setText(format_currency(change))
             self._change_val.setStyleSheet(
                 f"font-size:20px;font-weight:800;color:{GREEN};"
                 "font-family:'DM Mono',monospace;"
@@ -372,8 +373,8 @@ class CheckoutDialog(QDialog):
         if self._method == "cash" and tendered < self.total:
             QMessageBox.warning(
                 self, "Insufficient Cash",
-                f"Cash (${tendered:.2f}) is less than total (${self.total:.2f}).\n"
-                f"Shortage: ${self.total - tendered:.2f}"
+                f"Cash ({format_currency(tendered)}) is less than total ({format_currency(self.total)}).\n"
+                f"Shortage: {format_currency(self.total - tendered)}"
             )
             self.cash_input.selectAll(); self.cash_input.setFocus()
             return
@@ -383,7 +384,7 @@ class CheckoutDialog(QDialog):
             if combined < self.total:
                 QMessageBox.warning(
                     self, "Insufficient Amount",
-                    f"Combined amount (${combined:.2f}) is less than total (${self.total:.2f})."
+                    f"Combined amount ({format_currency(combined)}) is less than total ({format_currency(self.total)})."
                 )
                 return
             change = round(combined - self.total, 2)
