@@ -89,7 +89,12 @@ def _item_value_cols(width: int) -> tuple[int, int, int, int]:
     return qty_w, price_w, gct_w, total_w
 
 def _cur(amount: float, symbol: str = "$") -> str:
-    return f"{symbol}{amount:.2f}"
+    # Thousands separator matters here — JMD prices routinely run into the
+    # thousands (e.g. $1,258.00), and a printed receipt with no comma is
+    # easy for a customer to misread.
+    if amount < 0:
+        return f"-{symbol}{-amount:,.2f}"
+    return f"{symbol}{amount:,.2f}"
 
 # Column widths for the "    {name} {qty}x {total}" rows used by both the
 # LINE ITEMS and PRODUCT SUMMARY sections of the Z-report. QTY_W/TOTAL_W
