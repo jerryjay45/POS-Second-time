@@ -16,6 +16,7 @@ from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, BORDER,
     DARK_CARD, MUTED, WARM_WHITE, WHITE,
 )
+from utils.currency import format_currency
 
 
 class SearchableProductCombo(QWidget):
@@ -213,7 +214,7 @@ class SearchableProductCombo(QWidget):
             for p in results:
                 # Alias-group members DO keep their own stock but share cost
                 # with the group — show effective_cost so it's never stale.
-                item = QListWidgetItem(f"{p['name']}  (${p['effective_cost']:.2f})")
+                item = QListWidgetItem(f"{p['name']}  ({format_currency(p['effective_cost'])})")
                 item.setData(Qt.ItemDataRole.UserRole, p["id"])
                 item.setData(Qt.ItemDataRole.UserRole + 1, p["name"])
                 item.setData(Qt.ItemDataRole.UserRole + 2, p["effective_cost"])
