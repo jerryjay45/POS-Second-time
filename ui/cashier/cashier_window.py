@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, QTimer, QDateTime
 from PyQt6.QtGui  import QColor, QKeySequence
 
 from ui.base_window   import BaseWindow
+from utils.currency   import format_currency
 from ui.shared.theme  import (
     AMBER, AMBER_DARK, AMBER_LIGHT, AMBER_LIGHTEST, AMBER_BG,
     DARK, DARK_2, DARK_3, DARK_4, DARK_CARD,
@@ -156,7 +157,7 @@ class CashierWindow(BaseWindow):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             qk = self._quick_keys[i] if i < len(self._quick_keys) else None
             if qk and qk.get("product_id"):
-                btn.setText(f"F{i+1}\n{qk['product_name'][:12]}\n${qk['product_price']:.2f}")
+                btn.setText(f"F{i+1}\n{qk['product_name'][:12]}\n{format_currency(qk['product_price'])}")
                 btn.setStyleSheet(self._fkey_style(True))
                 btn.clicked.connect(lambda _, idx=i: self._add_quick_key(idx))
             else:
@@ -269,7 +270,10 @@ class CashierWindow(BaseWindow):
         ])
         hh = self.cart_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col, w in enumerate([70, 90, 90, 90, 90, 60], start=1):
+        # Widened from the original 90px — that fit "$2.50" fine but clips
+        # both header text like "GCT (16.5%)" and JMD-scale prices like
+        # "$1,258.00" / "-$1,258.00", which are routine here, not edge cases.
+        for col, w in enumerate([70, 100, 100, 115, 100, 60], start=1):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.cart_table.setColumnWidth(col, w)
         self.cart_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -585,7 +589,7 @@ class CashierWindow(BaseWindow):
         else:
             for p in results:
                 tag = "  [GCT]" if p["gct_applicable"] else "  [No GCT]"
-                item = QListWidgetItem(f"  {p['name']}  —  ${p['effective_selling_price']:.2f}{tag}")
+                item = QListWidgetItem(f"  {p['name']}  —  {format_currency(p['effective_selling_price'])}{tag}")
                 item.setData(Qt.ItemDataRole.UserRole, p)
                 self.results_list.addItem(item)
             n = len(results)
@@ -796,13 +800,13 @@ class CashierWindow(BaseWindow):
         disc   = item.get("discount_applied", 0.0)
         disc_t = round(disc * new_qty, 2)
         dc     = AMBER_DARK if disc > 0 else "#aaa"
-        disc_item = QTableWidgetItem(f"-${disc_t:.2f}" if disc > 0 else "—")
+        disc_item = QTableWidgetItem((f"-{format_currency(disc_t)}" if disc > 0 else "—"))
         disc_item.setForeground(QColor(dc)); disc_item.setTextAlignment(C)
         self.cart_table.setItem(row, 3, disc_item)
-        gct_item = QTableWidgetItem(f"${item['gct'] * new_qty:.2f}")
+        gct_item = QTableWidgetItem(format_currency(item['gct'] * new_qty))
         gct_item.setForeground(QColor(AMBER_DARK)); gct_item.setTextAlignment(C)
         self.cart_table.setItem(row, 4, gct_item)
-        total_item = QTableWidgetItem(f"${item['total']:.2f}")
+        total_item = QTableWidgetItem(format_currency(item['total']))
         total_item.setForeground(QColor(AMBER_DARK)); total_item.setTextAlignment(C)
         self.cart_table.setItem(row, 5, total_item)
 
@@ -891,14 +895,14 @@ class CashierWindow(BaseWindow):
             qty_spin.valueChanged.connect(lambda val, r=row: self._update_qty(r, val))
             self.cart_table.setCellWidget(row, 1, qty_spin)
 
-            self.cart_table.setItem(row, 2, cell(f"${item['price']:.2f}", AMBER_DARK, C))
+            self.cart_table.setItem(row, 2, cell(format_currency(item['price']), AMBER_DARK, C))
             self.cart_table.setItem(row, 3, cell(
-                f"-${disc_t:.2f}" if disc > 0 else "—", dc, C
+                (f"-{format_currency(disc_t)}" if disc > 0 else "—"), dc, C
             ))
             self.cart_table.setItem(row, 4, cell(
-                f"${item['gct'] * item['qty']:.2f}", AMBER_DARK, C
+                format_currency(item['gct'] * item['qty']), AMBER_DARK, C
             ))
-            self.cart_table.setItem(row, 5, cell(f"${item['total']:.2f}", AMBER_DARK, C))
+            self.cart_table.setItem(row, 5, cell(format_currency(item['total']), AMBER_DARK, C))
 
             rm = QPushButton("✕")
             rm.setStyleSheet(f"""
@@ -919,10 +923,10 @@ class CashierWindow(BaseWindow):
         gct      = sum(item["gct"]   * item["qty"] for item in self.cart)
         discount = sum(item.get("discount_applied", 0.0) * item["qty"] for item in self.cart)
         total    = subtotal + gct - discount
-        self.subtotal_label.setText(f"${subtotal:.2f}")
-        self.gct_label.setText(f"${gct:.2f}")
-        self.discount_label.setText(f"${discount:.2f}")
-        self.total_label.setText(f"${total:.2f}")
+        self.subtotal_label.setText(format_currency(subtotal))
+        self.gct_label.setText(format_currency(gct))
+        self.discount_label.setText(format_currency(discount))
+        self.total_label.setText(format_currency(total))
 
     # ================================================================
     # CHECKOUT
@@ -1053,7 +1057,7 @@ class CashierWindow(BaseWindow):
         banner.raise_()
 
     def _show_change(self, change: float):
-        self._change_display.setText(f"${change:.2f}")
+        self._change_display.setText(format_currency(change))
         self._change_frame.setVisible(True)
 
     def _reprint_last(self):
