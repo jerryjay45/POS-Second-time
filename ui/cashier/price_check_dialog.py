@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QColor
+from utils.currency import format_currency
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHT, AMBER_LIGHTEST,
@@ -254,12 +255,12 @@ class PriceCheckDialog(QDialog):
         self.result_name.setText(product["name"])
 
         price = product["effective_selling_price"]
-        self.result_price.setText(f"${price:.2f}")
+        self.result_price.setText(format_currency(price))
 
         # GCT info
         if product.get("gct_applicable"):
             gct_amt = price * self._gct_rate
-            self.result_gct.setText(f"GCT ({self._gct_rate*100:.1f}%): ${gct_amt:.2f}  ·  Total incl. tax: ${price + gct_amt:.2f}")
+            self.result_gct.setText(f"GCT ({self._gct_rate*100:.1f}%): {format_currency(gct_amt)}  ·  Total incl. tax: {format_currency(price + gct_amt)}")
         else:
             self.result_gct.setText("No GCT applicable")
 
@@ -272,7 +273,7 @@ class PriceCheckDialog(QDialog):
         if cost > 0:
             margin = price - cost
             margin_pct = (margin / cost * 100) if cost > 0 else 0
-            self.result_margin.setText(f"Cost: ${cost:.2f}  ·  Margin: ${margin:.2f} ({margin_pct:.1f}%)")
+            self.result_margin.setText(f"Cost: {format_currency(cost)}  ·  Margin: {format_currency(margin)} ({margin_pct:.1f}%)")
         else:
             self.result_margin.setText("")
 
@@ -291,7 +292,7 @@ class PriceCheckDialog(QDialog):
 
         for p in results:
             tag = "  [GCT]" if p.get("gct_applicable") else "  [No GCT]"
-            item_text = f"{p['name']}  —  ${p['effective_selling_price']:.2f}{tag}"
+            item_text = f"{p['name']}  —  {format_currency(p['effective_selling_price'])}{tag}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, p)
             self.results_list.addItem(item)
