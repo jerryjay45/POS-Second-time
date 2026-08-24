@@ -14,6 +14,7 @@ from PyQt6.QtCore  import Qt, QTimer, QDateTime, pyqtSignal
 from PyQt6.QtGui   import QColor, QDoubleValidator
 
 from ui.base_window  import BaseWindow
+from utils.currency  import format_currency
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, AMBER_BG,
     DARK, DARK_2, DARK_4, DARK_CARD,
@@ -173,9 +174,9 @@ class SupervisorWindow(BaseWindow):
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.product_table.setColumnWidth(2, 80)
+        self.product_table.setColumnWidth(2, 100)  # was 80 — clips JMD-scale amounts like $1,258.00
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.product_table.setColumnWidth(3, 80)
+        self.product_table.setColumnWidth(3, 100)  # was 80 — same
         hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.product_table.setColumnWidth(4, 80)
         hh.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
@@ -572,8 +573,8 @@ class SupervisorWindow(BaseWindow):
             tags_color = AMBER_DARK if tags else MUTED
             self.product_table.setItem(row, 0, cell(p["name"]))
             self.product_table.setItem(row, 1, cell(p["barcode"], MUTED))
-            self.product_table.setItem(row, 2, cell(f"${p['effective_cost']:.2f}", AMBER_DARK, R))
-            self.product_table.setItem(row, 3, cell(f"${p['effective_selling_price']:.2f}", GREEN, R))
+            self.product_table.setItem(row, 2, cell(f"{format_currency(p['effective_cost'])}", AMBER_DARK, R))
+            self.product_table.setItem(row, 3, cell(f"{format_currency(p['effective_selling_price'])}", GREEN, R))
             self.product_table.setItem(row, 4, cell(tags_str, tags_color, C))
             act = QWidget(); al = QHBoxLayout(act)
             al.setContentsMargins(4, 2, 4, 2); al.setSpacing(4)
@@ -655,7 +656,7 @@ class SupervisorWindow(BaseWindow):
         self.f_barcode[1].setText(p["barcode"])
         self.f_name[1].setText(p["name"])
         self.f_cost[1].setText(str(p["effective_cost"]))
-        self.f_price.setText(f"${p['effective_selling_price']:.2f}")
+        self.f_price.setText(f"{format_currency(p['effective_selling_price'])}")
         self.t_gct.setChecked(bool(p["gct_applicable"]))
         self.t_case.setChecked(bool(p["is_case"]))
         if p["is_case"]:
@@ -864,7 +865,7 @@ class SupervisorWindow(BaseWindow):
             names = ", ".join(c["name"] for c in affected_cases)
             QMessageBox.information(
                 self, "Case Prices Updated",
-                f"Cost (${cost:.4f}) and price (${selling_price:.2f}) synced to the group.\n"
+                f"Cost (${cost:.4f}) and price ({format_currency(selling_price)}) synced to the group.\n"
                 f"Linked case product{'s' if len(affected_cases) != 1 else ''} repriced: {names}"
             )
 
@@ -901,9 +902,9 @@ class SupervisorWindow(BaseWindow):
         except: return
         gid = self.f_group.currentData()
         price = self._get_selling_price(cost, gid)
-        self.f_price.setText(f"${price:.2f}")
+        self.f_price.setText(f"{format_currency(price)}")
         m = self._group_markup(gid)
-        self.f_price_hint.setText(f"= ${cost:.2f} × (1 + {m*100:.0f}%) = ${price:.2f}" if m and cost else "")
+        self.f_price_hint.setText(f"= {format_currency(cost)} × (1 + {m*100:.0f}%) = {format_currency(price)}" if m and cost else "")
 
     def _get_selling_price(self, cost, group_id):
         m = self._group_markup(group_id)
@@ -1075,7 +1076,7 @@ class SupervisorWindow(BaseWindow):
         qty = self.f_case_qty2.value() or 1
         derived_cost = round(g["cost"] * qty, 4)
         self.case_grp_info_lbl.setText(
-            f"Group cost/unit: ${g['cost']:.4f}   Group price/unit: ${g['selling_price']:.2f}\n"
+            f"Group cost/unit: ${g['cost']:.4f}   Group price/unit: {format_currency(g['selling_price'])}\n"
             f"Case cost = ${g['cost']:.4f} × {qty} = ${derived_cost:.4f}  (auto-set on save)"
         )
         stock = g["stock"]
@@ -1347,7 +1348,7 @@ class SupervisorWindow(BaseWindow):
             # Use live sales from enriched key, fallback to stored value
             live_sales = s.get("_sales", s.get("total_sales", 0))
             txns = s.get("_txns", 0)
-            sales = QTableWidgetItem(f"${live_sales:.2f}  ({txns} txns)")
+            sales = QTableWidgetItem(f"{format_currency(live_sales)}  ({txns} txns)")
             sales.setForeground(QColor(AMBER)); sales.setTextAlignment(R)
             for col, it in enumerate([num, stat, opened, closed, sales]):
                 self.rpt_session_list.setItem(i, col, it)
@@ -1395,10 +1396,10 @@ class SupervisorWindow(BaseWindow):
         session = next((s for s in self._rpt_all_sessions
                         if s["id"] == self._rpt_selected_session_id), None)
         if session:
-            self.rpt_cards["total_sales"].setText(f"${session['_sales']:.2f}")
-            self.rpt_cards["total_gct"].setText(f"${session['_gct']:.2f}")
+            self.rpt_cards["total_sales"].setText(f"{format_currency(session['_sales'])}")
+            self.rpt_cards["total_gct"].setText(f"{format_currency(session['_gct'])}")
             self.rpt_cards["transactions"].setText(str(session["_txns"]))
-            self.rpt_cards["discounts"].setText(f"${session['_disc']:.2f}")
+            self.rpt_cards["discounts"].setText(f"{format_currency(session['_disc'])}")
 
     def _rpt_refresh(self):
         if self._rpt_selected_cashier_id: self._rpt_load_sessions(self._rpt_selected_cashier_id)
@@ -1641,7 +1642,7 @@ class SupervisorWindow(BaseWindow):
             self.tx_table.setItem(i, 1, QTableWidgetItem(cname))
             self.tx_table.setItem(i, 2, QTableWidgetItem(dt[:10]))
             self.tx_table.setItem(i, 3, QTableWidgetItem(dt[11:19]))
-            tot = QTableWidgetItem(f"${r['total']:.2f}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R)
+            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R)
             self.tx_table.setItem(i, 4, tot)
             sc = sc_map.get(r["status"], MUTED)
             stat = QTableWidgetItem(r["status"].capitalize()); stat.setForeground(QColor(sc)); stat.setTextAlignment(C)
@@ -1681,9 +1682,9 @@ class SupervisorWindow(BaseWindow):
         for r, it in enumerate(items):
             self.tx_items_table.setItem(r, 0, QTableWidgetItem(it["product_name"]))
             qi = QTableWidgetItem(str(it["quantity"])); qi.setTextAlignment(Qt.AlignmentFlag.AlignCenter); self.tx_items_table.setItem(r, 1, qi)
-            pi = QTableWidgetItem(f"${it['unit_price']:.2f}"); pi.setTextAlignment(R); self.tx_items_table.setItem(r, 2, pi)
-            ti = QTableWidgetItem(f"${it['line_total']:.2f}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R); self.tx_items_table.setItem(r, 3, ti)
-        self.tx_footer.setText(f"Subtotal: ${receipt['subtotal']:.2f}  |  GCT: ${receipt['gct_amount']:.2f}  |  <b>Total: ${receipt['total']:.2f}</b>")
+            pi = QTableWidgetItem(f"{format_currency(it['unit_price'])}"); pi.setTextAlignment(R); self.tx_items_table.setItem(r, 2, pi)
+            ti = QTableWidgetItem(f"{format_currency(it['line_total'])}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R); self.tx_items_table.setItem(r, 3, ti)
+        self.tx_footer.setText(f"Subtotal: {format_currency(receipt['subtotal'])}  |  GCT: {format_currency(receipt['gct_amount'])}  |  <b>Total: {format_currency(receipt['total'])}</b>")
         self.tx_footer.setTextFormat(Qt.TextFormat.RichText)
         self.tx_reprint_btn.setEnabled(True)
 
@@ -1866,7 +1867,7 @@ class SupervisorWindow(BaseWindow):
             dt = str(r["created_at"])
             self.vr_table.setItem(i, 0, num); self.vr_table.setItem(i, 1, QTableWidgetItem(cname))
             self.vr_table.setItem(i, 2, QTableWidgetItem(dt[:10])); self.vr_table.setItem(i, 3, QTableWidgetItem(dt[11:19]))
-            tot = QTableWidgetItem(f"${r['total']:.2f}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R); self.vr_table.setItem(i, 4, tot)
+            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R); self.vr_table.setItem(i, 4, tot)
             sc = sc_map.get(r["status"], MUTED); stat = QTableWidgetItem(r["status"].capitalize()); stat.setForeground(QColor(sc)); stat.setTextAlignment(C); self.vr_table.setItem(i, 5, stat)
         self._vr_pg_label.setText(f"Page {self._vr_pg_page + 1} of {pages}  ({total} receipts)")
         self._vr_pg_prev.setEnabled(self._vr_pg_page > 0)
@@ -1914,10 +1915,10 @@ class SupervisorWindow(BaseWindow):
             qty_spin.valueChanged.connect(self._vr_update_selected_amount)
             self.vr_items_table.setCellWidget(r, 2, qty_spin)
 
-            pi = QTableWidgetItem(f"${it['unit_price']:.2f}"); pi.setTextAlignment(R); self.vr_items_table.setItem(r, 3, pi)
-            ti = QTableWidgetItem(f"${it['line_total']:.2f}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R)
+            pi = QTableWidgetItem(f"{format_currency(it['unit_price'])}"); pi.setTextAlignment(R); self.vr_items_table.setItem(r, 3, pi)
+            ti = QTableWidgetItem(f"{format_currency(it['line_total'])}"); ti.setForeground(QColor(GREEN)); ti.setTextAlignment(R)
             self.vr_items_table.setItem(r, 4, ti)  # updated live in _vr_update_selected_amount
-        self.vr_totals.setText(f"Subtotal: ${receipt['subtotal']:.2f}  |  GCT: ${receipt['gct_amount']:.2f}  |  <b>Total: ${receipt['total']:.2f}</b>")
+        self.vr_totals.setText(f"Subtotal: {format_currency(receipt['subtotal'])}  |  GCT: {format_currency(receipt['gct_amount'])}  |  <b>Total: {format_currency(receipt['total'])}</b>")
         self.vr_totals.setTextFormat(Qt.TextFormat.RichText)
         self.vr_status_banner.setVisible(False); self.vr_reason.clear(); self._vr_update_buttons()
 
@@ -1947,8 +1948,8 @@ class SupervisorWindow(BaseWindow):
             total += line_amount
             cell = self.vr_items_table.item(r, 4)
             if cell:
-                cell.setText(f"${line_amount:.2f}")
-        self.vr_amount_lbl.setText(f"Refund total: ${total:.2f}")
+                cell.setText(f"{format_currency(line_amount)}")
+        self.vr_amount_lbl.setText(f"Refund total: {format_currency(total)}")
 
     def _vr_update_buttons(self):
         ok = self._vr_selected_tx_id is not None and self._vr_selected_tx_status=="completed" and bool(self.vr_reason.text().strip())
@@ -2001,7 +2002,7 @@ class SupervisorWindow(BaseWindow):
                 amount += round((it["line_total"] / it["quantity"]) * qty, 2)
         if not items: QMessageBox.warning(self, "No Items", "Select at least one item with a refund quantity."); return
         mode = "Partial" if is_partial else "Full"
-        reply = QMessageBox.question(self, f"Confirm {mode} Refund", f"{mode} refund — ${amount:.2f}\nReason: {reason}\n\nThis cannot be undone.",
+        reply = QMessageBox.question(self, f"Confirm {mode} Refund", f"{mode} refund — {format_currency(amount)}\nReason: {reason}\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes: return
         rtype = "partial" if is_partial else "full"
@@ -2033,7 +2034,7 @@ class SupervisorWindow(BaseWindow):
                 from utils.print_manager import print_refund
                 print_refund(receipt, refund_rec, refunded_by_user=self.user, parent=self)
             self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
-            self.vr_status_banner.setText(f"✓  {mode} refund of ${amount:.2f} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
+            self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
         else: QMessageBox.critical(self, "Failed", "Could not process refund.")
 
@@ -2061,7 +2062,7 @@ class SupervisorWindow(BaseWindow):
             badge.setStyleSheet(f"background:{DARK_CARD};color:{AMBER};border-radius:6px;font-size:11px;font-weight:700;")
             inp = QLineEdit(); inp.setFixedHeight(34)
             inp.setPlaceholderText("Search products…")
-            inp.setText(f"{k['product_name']} (${k['product_price']:.2f})" if k.get("product_name") else "")
+            inp.setText(f"{k['product_name']} ({format_currency(k['product_price'])})" if k.get("product_name") else "")
             inp.setStyleSheet(self._input_style(accent=bool(k.get("product_name"))))
             inp.setProperty("slot", k["slot"]); inp.setProperty("product_id", k.get("product_id"))
             row.addWidget(badge); row.addWidget(inp, stretch=1)
