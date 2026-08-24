@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui  import QColor
+from utils.currency import format_currency
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST,
@@ -250,8 +251,8 @@ class VoidDialog(QDialog):
 
             self.item_table.setItem(row, 1, cell(item["name"]))
             self.item_table.setItem(row, 2, cell(str(item["qty"]), MUTED, C))
-            self.item_table.setItem(row, 3, cell(f"${item['price']:.2f}", AMBER_DARK, R))
-            self.item_table.setItem(row, 4, cell(f"${line_total:.2f}", RED, R))
+            self.item_table.setItem(row, 3, cell(format_currency(item['price']), AMBER_DARK, R))
+            self.item_table.setItem(row, 4, cell(format_currency(line_total), RED, R))
 
     def keyPressEvent(self, event):
         """Block Escape and Enter from closing the dialog unexpectedly."""
@@ -285,7 +286,7 @@ class VoidDialog(QDialog):
         if hasattr(self, "_void_total_lbl"):
             if count:
                 self._void_total_lbl.setText(
-                    f"Removing {count} item{'s' if count != 1 else ''}  —  ${total:.2f}"
+                    f"Removing {count} item{'s' if count != 1 else ''}  —  {format_currency(total)}"
                 )
             else:
                 self._void_total_lbl.setText("No items selected")
