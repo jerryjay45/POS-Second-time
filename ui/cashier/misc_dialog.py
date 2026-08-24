@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui  import QDoubleValidator
+from utils.currency import format_currency
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST,
@@ -210,9 +211,9 @@ class MiscDialog(QDialog):
         except: price = 0.0
         gct_amt = round(price * self._gct_rate, 2) if self.gct_check.isChecked() else 0.0
         total   = round((price + gct_amt) * qty, 2)
-        gct_str = f" + GCT ${gct_amt * qty:.2f}" if gct_amt else ""
+        gct_str = f" + GCT {format_currency(gct_amt * qty)}" if gct_amt else ""
         self.preview_lbl.setText(
-            f"{desc}  ×{qty}  @  ${price:.2f}{gct_str}  =  ${total:.2f}"
+            f"{desc}  ×{qty}  @  {format_currency(price)}{gct_str}  =  {format_currency(total)}"
         )
 
     def _confirm(self):
