@@ -35,6 +35,13 @@ from PyQt6.QtCore import pyqtSignal
 # Cart panel colors — change per active cart
 CART_COLORS = ["#EF9F27", "#1a9e6c", "#c7622a"]
 
+# AMBER_DARK (#BA7517, the shared theme constant) measured ~3.7:1 as text
+# on a white table background — under the 4.5:1 floor for this small,
+# normal-weight numeric text. Scoped to this file rather than changing the
+# shared constant, which is also used correctly elsewhere (as a background
+# for hover/focus/pressed states, a different contrast situation entirely).
+AMBER_TABLE_TEXT = "#8a5510"
+
 
 class CashierWindow(BaseWindow):
     logout_requested = pyqtSignal()
@@ -73,6 +80,7 @@ class CashierWindow(BaseWindow):
         self.setWindowTitle("POS System — Cashier")
         self.setMinimumSize(1280, 720)
         self._build_ui()
+        self._refresh_table()  # show the empty-cart placeholder immediately on launch
         self._start_clock()
         self._show_session_started_popup()
 
@@ -108,6 +116,7 @@ class CashierWindow(BaseWindow):
         body.addWidget(self._build_center_panel(), stretch=1)
         body.addWidget(self._build_right_panel())
         lay.addLayout(body, stretch=1)
+        lay.addWidget(self._build_totals_bar())
 
     # ── Topbar ────────────────────────────────────────────────────────
     def _build_topbar(self):
@@ -122,13 +131,18 @@ class CashierWindow(BaseWindow):
 
         self._clock_lbl = QLabel()
         self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._clock_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;font-family:'DM Mono',monospace;")
+        # MUTED (#6B6860) on the topbar's near-black background measured
+        # ~3.5:1 — below the 4.5:1 floor for this normal-sized text.
+        # Scoped override just for this label (not touching the shared
+        # MUTED constant, which is used correctly elsewhere on lighter
+        # backgrounds where it already passes).
+        self._clock_lbl.setStyleSheet("color:#9a9690;font-size:11px;font-family:'DM Mono',monospace;")
 
         logout = QPushButton("Logout  ↗")
         logout.setFixedHeight(30)
         logout.setCursor(Qt.CursorShape.PointingHandCursor)
         logout.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:15px;font-size:11px;font-weight:700;padding:0 16px;}}
             QPushButton:hover{{background:{AMBER_DARK};}}
         """)
@@ -213,7 +227,7 @@ class CashierWindow(BaseWindow):
 
         self.search_input = QLineEdit()
         self.search_input.setFixedHeight(34)
-        self.search_input.setPlaceholderText("↵  Barcode  |  Search  ↵  Checkout")
+        self.search_input.setPlaceholderText("Scan or search products  ·  ↵ on empty = Checkout")
         self.search_input.setStyleSheet(f"""
             QLineEdit{{background:white;color:{DARK_CARD};
             border:2px solid #888;border-radius:17px;
@@ -227,7 +241,7 @@ class CashierWindow(BaseWindow):
         checkout_btn.setFixedSize(110, 34)
         checkout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         checkout_btn.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:17px;font-size:12px;font-weight:600;}}
             QPushButton:hover{{background:{AMBER_DARK};}}
         """)
@@ -254,7 +268,7 @@ class CashierWindow(BaseWindow):
             QListWidget{{background:{WHITE};color:{DARK_CARD};
             border:1px solid {BORDER};border-radius:8px;font-size:13px;}}
             QListWidget::item{{padding:8px 14px;border-bottom:1px solid {BORDER_LIGHT};}}
-            QListWidget::item:selected{{background:{AMBER};color:white;}}
+            QListWidget::item:selected{{background:{AMBER};color:{DARK};}}
             QListWidget::item:hover{{background:{AMBER_LIGHTEST};}}
         """)
         self.results_list.itemClicked.connect(self._add_from_results)
@@ -291,56 +305,43 @@ class CashierWindow(BaseWindow):
         """)
         lay.addWidget(self.cart_table, stretch=1)
 
-        # Bottom buttons
-        bot = QFrame()
-        bot.setFixedHeight(46)
-        bot.setStyleSheet(f"background:{DARK_2};border-top:1px solid {DARK_4};")
-        bot_lay = QHBoxLayout(bot)
-        bot_lay.setContentsMargins(10, 7, 10, 7)
-        bot_lay.setSpacing(8)
-
-        clear_btn = QPushButton("🗑  Clear Cart")
-        clear_btn.setFixedHeight(30)
-        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clear_btn.setStyleSheet(self._pill_btn_style())
-        clear_btn.clicked.connect(self._clear_cart)
-
-        misc_btn = QPushButton("✱  Misc Item")
-        misc_btn.setFixedHeight(30)
-        misc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        misc_btn.setStyleSheet(self._pill_btn_style())
-        misc_btn.clicked.connect(self._add_misc_item)
-
-        price_btn = QPushButton("▦  Price Check")
-        price_btn.setFixedHeight(30)
-        price_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        price_btn.setStyleSheet(self._pill_btn_style())
-        price_btn.clicked.connect(self._price_check)
-
-        bot_lay.addWidget(clear_btn)
-        bot_lay.addWidget(misc_btn)
-
-        remove_btn = QPushButton("⊘  Remove Items")
-        remove_btn.setFixedHeight(30)
-        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        remove_btn.setStyleSheet(f"""
-            QPushButton{{background:{DARK_4};color:#ef4444;
-            border:1px solid #7a1e1e;border-radius:15px;
-            font-size:11px;font-weight:600;padding:0 14px;}}
-            QPushButton:hover{{background:#7a1e1e;color:white;}}
+        # Empty-cart placeholder — a plain white void with just the column
+        # header looked unfinished and gave no indication of what to do
+        # next. Parented to the table's VIEWPORT (not cart_table itself) —
+        # the viewport is what actually paints the cell area and sits on
+        # top in z-order, so a label parented to cart_table directly would
+        # render behind it and never actually show.
+        self._empty_cart_lbl = QLabel(
+            "🛒\nCart is empty\nScan a barcode or search to add items",
+            self.cart_table.viewport()
+        )
+        self._empty_cart_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_cart_lbl.setStyleSheet(f"""
+            color:{MUTED};font-size:13px;font-weight:500;
+            background:transparent;line-height:1.6;
         """)
-        remove_btn.clicked.connect(self._handle_void)
-        bot_lay.addWidget(remove_btn)
-        bot_lay.addWidget(price_btn)
-        bot_lay.addStretch()
-        lay.addWidget(bot)
+        self._empty_cart_lbl.setVisible(False)
 
+        def _position_empty_label(event=None):
+            self._empty_cart_lbl.setGeometry(self.cart_table.viewport().rect())
+            if event is not None:
+                QTableWidget.resizeEvent(self.cart_table, event)
+        self.cart_table.resizeEvent = _position_empty_label
+        self._position_empty_cart_lbl = _position_empty_label
+
+        # Bottom buttons removed from here — moved to the right sidebar,
+        # replacing the totals blocks that used to live there (see
+        # _build_right_panel and _build_totals_bar). Totals now live in a
+        # full-width bar at the very bottom of the window instead.
         return panel
 
     # ── Right panel ───────────────────────────────────────────────────
     def _build_right_panel(self):
         panel = QFrame()
-        panel.setFixedWidth(168)
+        # Widened from 168px — "⊘  Remove Items" and the other action
+        # buttons that now live here need more room than the old narrow
+        # totals blocks did.
+        panel.setFixedWidth(190)
         panel.setStyleSheet(f"background:{DARK_2};border-left:1px solid {DARK_4};")
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -355,11 +356,11 @@ class CashierWindow(BaseWindow):
 
         self._cart_lbl = QLabel("Cart 1")
         self._cart_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cart_lbl.setStyleSheet("color:white;font-size:16px;font-weight:700;background:transparent;")
+        self._cart_lbl.setStyleSheet(f"color:{DARK};font-size:16px;font-weight:700;background:transparent;")
 
         self._cart_items_lbl = QLabel("")
         self._cart_items_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cart_items_lbl.setStyleSheet("color:rgba(255,255,255,0.75);font-size:11px;font-weight:400;background:transparent;")
+        self._cart_items_lbl.setStyleSheet("color:rgba(13,13,13,0.72);font-size:11px;font-weight:500;background:transparent;")
 
         nav_row = QHBoxLayout()
         prev_btn = QPushButton("←"); prev_btn.setFixedSize(34,34)
@@ -376,7 +377,6 @@ class CashierWindow(BaseWindow):
         cs_lay.addWidget(self._cart_items_lbl)
         cs_lay.addLayout(nav_row)
         lay.addWidget(self._cart_section)
-
         # Reprint last receipt button (hidden until first txn)
         self._reprint_btn = QPushButton("🖨  Reprint Last")
         self._reprint_btn.setFixedHeight(30)
@@ -390,7 +390,15 @@ class CashierWindow(BaseWindow):
         """)
         self._reprint_btn.setVisible(False)
         self._reprint_btn.clicked.connect(self._reprint_last)
-        lay.addWidget(self._reprint_btn)
+        # Not added to the layout here — see below. Building it here keeps
+        # it near the cart-selector code it's conceptually related to, but
+        # it displays AFTER the action buttons (see the addWidget order
+        # below): reprint/last-change are secondary reference info about
+        # the previous sale, while the buttons are primary, always-present
+        # controls. Keeping the buttons first means their on-screen
+        # position never shifts once reprint/change become visible after
+        # the first completed sale — a cashier's muscle memory for where
+        # "Clear Cart" etc. sit stays consistent from the very first click.
 
         # Last change display (hidden until first txn)
         self._change_frame = QFrame()
@@ -408,32 +416,118 @@ class CashierWindow(BaseWindow):
         self._change_display.setStyleSheet(f"color:{GREEN};font-size:22px;font-weight:800;background:transparent;")
         cf_lay.addWidget(_line); cf_lay.addWidget(_title); cf_lay.addWidget(self._change_display)
         self._change_frame.setVisible(False)
-        lay.addWidget(self._change_frame)
+        # Also not added to the layout here — see the addWidget order below.
 
-        # Totals blocks
+        # Action buttons — moved here from the old bottom bar in the center
+        # panel. No addStretch() before them: content packs from the top,
+        # so any leftover vertical space pools naturally at the very
+        # bottom, right above the new full-width totals bar — reading as
+        # one continuous "bottom zone" instead of a dead gap mid-panel.
+        btn_wrap = QFrame()
+        btn_wrap.setStyleSheet("background:transparent;")
+        bw_lay = QVBoxLayout(btn_wrap)
+        bw_lay.setContentsMargins(10, 14, 10, 10)
+        bw_lay.setSpacing(8)
+
+        clear_btn = QPushButton("🗑  Clear Cart")
+        clear_btn.setFixedHeight(36)
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setStyleSheet(self._pill_btn_style())
+        clear_btn.clicked.connect(self._clear_cart)
+
+        misc_btn = QPushButton("✱  Misc Item")
+        misc_btn.setFixedHeight(36)
+        misc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        misc_btn.setStyleSheet(self._pill_btn_style())
+        misc_btn.clicked.connect(self._add_misc_item)
+
+        price_btn = QPushButton("▦  Price Check")
+        price_btn.setFixedHeight(36)
+        price_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        price_btn.setStyleSheet(self._pill_btn_style())
+        price_btn.clicked.connect(self._price_check)
+
+        remove_btn = QPushButton("⊘  Remove Items")
+        remove_btn.setFixedHeight(36)
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Was dark-red text (#ef4444) on dark grey — measured ~3.6:1,
+        # short of the 4.5:1 floor for this size/weight. Solid red
+        # background + white text (matching what used to be only the
+        # hover state) gives ~10:1 and reads more clearly as a
+        # destructive action besides.
+        remove_btn.setStyleSheet(f"""
+            QPushButton{{background:#7a1e1e;color:white;
+            border:1px solid #962525;border-radius:15px;
+            font-size:11px;font-weight:600;padding:0 14px;}}
+            QPushButton:hover{{background:#962525;}}
+        """)
+        remove_btn.clicked.connect(self._handle_void)
+
+        bw_lay.addWidget(clear_btn)
+        bw_lay.addWidget(misc_btn)
+        bw_lay.addWidget(price_btn)
+        bw_lay.addWidget(remove_btn)
+        lay.addWidget(btn_wrap)
+        # Reprint/last-change now display below the action buttons — see
+        # the comments above _reprint_btn/_change_frame's construction for
+        # why. Both stay hidden (setVisible(False)) until the first
+        # completed sale, same as before — only their position changed.
+        lay.addWidget(self._reprint_btn)
+        lay.addWidget(self._change_frame)
+        lay.addStretch()  # any leftover space collects at the very bottom
+
+        return panel
+
+    def _build_totals_bar(self):
+        """Full-width totals strip — spans the entire window under the
+        F-key panel, center panel, and right sidebar, since it's added to
+        the root layout rather than nested inside any single column.
+        Replaces the old vertical totals stack that used to live in the
+        right sidebar (see _build_right_panel, which now holds the action
+        buttons instead)."""
+        bar = QFrame()
+        bar.setFixedHeight(70)
+        bar.setStyleSheet(f"background:{CART_COLORS[0]};border-top:1px solid {DARK_4};")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
         def block(title, attr, big=False):
             f = QFrame()
             color = CART_COLORS[self.active_cart]
             f.setStyleSheet(f"background:{color};border:none;")
-            bl = QVBoxLayout(f); bl.setContentsMargins(8,8,8,8); bl.setSpacing(3)
-            line = QFrame(); line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet("background:rgba(255,255,255,0.15);max-height:1px;border:none;")
+            bl = QVBoxLayout(f); bl.setContentsMargins(16, 8, 16, 8); bl.setSpacing(2)
             t = QLabel(title); t.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            t.setStyleSheet(f"color:#e2e8f0;font-size:{'14' if big else '12'}px;background:transparent;")
+            # White-ish text on plain amber measured at ~1.8:1 contrast —
+            # nowhere near readable. Dark text at partial opacity gives the
+            # same "quieter than the value" hierarchy while actually
+            # passing WCAG AA (~5.2:1).
+            t.setStyleSheet(f"color:rgba(13,13,13,0.72);font-size:{'14' if big else '12'}px;background:transparent;")
             v = QLabel("$0.00"); v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            v.setStyleSheet(f"color:white;font-size:{'22' if big else '14'}px;"
-                           f"font-weight:{'800' if big else '500'};background:transparent;")
-            bl.addWidget(line); bl.addWidget(t); bl.addWidget(v)
+            # Pure white on amber measured at 2.17:1 — solid dark text
+            # gives 8.94:1 on the same background.
+            v.setStyleSheet(f"color:{DARK};font-size:{'26' if big else '16'}px;"
+                           f"font-weight:{'800' if big else '600'};background:transparent;")
+            bl.addWidget(t); bl.addWidget(v)
             setattr(self, attr, v)
             setattr(self, f"{attr}_frame", f)
             return f
 
-        lay.addStretch()
-        lay.addWidget(block("Subtotal",                           "subtotal_label"))
-        lay.addWidget(block(f"GCT ({self._gct_rate*100:.2f}%)",  "gct_label"))
-        lay.addWidget(block("Discount",                           "discount_label"))
-        lay.addWidget(block("TOTAL",                              "total_label", big=True))
-        return panel
+        subtotal_f = block("Subtotal", "subtotal_label")
+        gct_f      = block(f"GCT ({self._gct_rate*100:.2f}%)", "gct_label")
+        discount_f = block("Discount", "discount_label")
+        total_f    = block("TOTAL", "total_label", big=True)
+
+        # Vertical divider between cells (skip the first) — horizontal
+        # equivalent of the HLine separator the old vertical stack used.
+        for f in (gct_f, discount_f, total_f):
+            f.setStyleSheet(f.styleSheet() + "border-left:1px solid rgba(255,255,255,0.15);")
+
+        lay.addWidget(subtotal_f, stretch=1)
+        lay.addWidget(gct_f,      stretch=1)
+        lay.addWidget(discount_f, stretch=1)
+        lay.addWidget(total_f,    stretch=2)  # TOTAL gets more horizontal room
+        return bar
 
     # ================================================================
     # CLOCK
@@ -468,8 +562,10 @@ class CashierWindow(BaseWindow):
 
         pl.addWidget(icon); pl.addWidget(msg, stretch=1)
 
-        # Position top-right of window
-        popup.move(self.width() - popup.width() - 20, 56)
+        # Position below the topbar AND the search/checkout row (44+50=94,
+        # +6px gap) — this used to sit at y=56, clearing only the topbar
+        # and landing directly on top of the search bar / Checkout button.
+        popup.move(self.width() - popup.width() - 20, 100)
         popup.show(); popup.raise_()
 
         # Auto-dismiss after 4 seconds with fade
@@ -573,7 +669,7 @@ class CashierWindow(BaseWindow):
         from PyQt6.QtCore import QTimer
         def _restore():
             self.search_input.setStyleSheet(original)
-            self.search_input.setPlaceholderText("↵  Barcode  |  Search  ↵  Checkout")
+            self.search_input.setPlaceholderText("Scan or search products  ·  ↵ on empty = Checkout")
         QTimer.singleShot(1200, _restore)
 
     def _show_results(self, results):
@@ -799,15 +895,15 @@ class CashierWindow(BaseWindow):
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
         disc   = item.get("discount_applied", 0.0)
         disc_t = round(disc * new_qty, 2)
-        dc     = AMBER_DARK if disc > 0 else "#aaa"
+        dc     = AMBER_TABLE_TEXT if disc > 0 else "#767676"  # "#aaa" measured 2.3:1 on white, failed badly
         disc_item = QTableWidgetItem((f"-{format_currency(disc_t)}" if disc > 0 else "—"))
         disc_item.setForeground(QColor(dc)); disc_item.setTextAlignment(C)
         self.cart_table.setItem(row, 3, disc_item)
         gct_item = QTableWidgetItem(format_currency(item['gct'] * new_qty))
-        gct_item.setForeground(QColor(AMBER_DARK)); gct_item.setTextAlignment(C)
+        gct_item.setForeground(QColor(AMBER_TABLE_TEXT)); gct_item.setTextAlignment(C)
         self.cart_table.setItem(row, 4, gct_item)
         total_item = QTableWidgetItem(format_currency(item['total']))
-        total_item.setForeground(QColor(AMBER_DARK)); total_item.setTextAlignment(C)
+        total_item.setForeground(QColor(AMBER_TABLE_TEXT)); total_item.setTextAlignment(C)
         self.cart_table.setItem(row, 5, total_item)
 
     def _remove_from_cart(self, row: int):
@@ -842,7 +938,7 @@ class CashierWindow(BaseWindow):
         total_items = len(self.cart)
         self._cart_lbl.setText(f"Cart {idx}")
         self._cart_lbl.setStyleSheet(
-            "color:white;font-size:16px;font-weight:700;background:transparent;"
+            f"color:{DARK};font-size:16px;font-weight:700;background:transparent;"
         )
         if total_items:
             self._cart_items_lbl.setText(f"({total_items} item{'s' if total_items != 1 else ''})")
@@ -853,10 +949,19 @@ class CashierWindow(BaseWindow):
     def _switch_cart(self):
         color = CART_COLORS[self.active_cart]
         self._update_cart_label()
-        for attr in ["_cart_section", "subtotal_label_frame",
-                     "gct_label_frame", "discount_label_frame", "total_label_frame"]:
+        self._cart_section.setStyleSheet(f"background:{color};border:none;")
+        # Totals bar cells — gct/discount/total keep their left-divider
+        # border (see _build_totals_bar); only subtotal has none.
+        for attr, has_divider in [
+            ("subtotal_label_frame", False),
+            ("gct_label_frame", True),
+            ("discount_label_frame", True),
+            ("total_label_frame", True),
+        ]:
             w = getattr(self, attr, None)
-            if w: w.setStyleSheet(f"background:{color};border:none;")
+            if w:
+                border = "border-left:1px solid rgba(255,255,255,0.15);" if has_divider else "border:none;"
+                w.setStyleSheet(f"background:{color};{border}")
         self.results_list.setVisible(False)
         self.search_input.clear()
         self._refresh_table(); self._update_totals()
@@ -866,6 +971,8 @@ class CashierWindow(BaseWindow):
     def _refresh_table(self):
         if hasattr(self, '_update_cart_label'): self._update_cart_label()
         self.cart_table.setRowCount(len(self.cart))
+        self._empty_cart_lbl.setVisible(len(self.cart) == 0)
+        self._position_empty_cart_lbl()
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
         L = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
 
@@ -878,7 +985,7 @@ class CashierWindow(BaseWindow):
 
             disc   = item.get("discount_applied", 0.0)
             disc_t = round(disc * item["qty"], 2)
-            dc     = AMBER_DARK if disc > 0 else "#aaa"
+            dc     = AMBER_TABLE_TEXT if disc > 0 else "#767676"  # "#aaa" measured 2.3:1 on white, failed badly
 
             self.cart_table.setItem(row, 0, cell(item["name"]))
 
@@ -895,14 +1002,14 @@ class CashierWindow(BaseWindow):
             qty_spin.valueChanged.connect(lambda val, r=row: self._update_qty(r, val))
             self.cart_table.setCellWidget(row, 1, qty_spin)
 
-            self.cart_table.setItem(row, 2, cell(format_currency(item['price']), AMBER_DARK, C))
+            self.cart_table.setItem(row, 2, cell(format_currency(item['price']), AMBER_TABLE_TEXT, C))
             self.cart_table.setItem(row, 3, cell(
                 (f"-{format_currency(disc_t)}" if disc > 0 else "—"), dc, C
             ))
             self.cart_table.setItem(row, 4, cell(
-                format_currency(item['gct'] * item['qty']), AMBER_DARK, C
+                format_currency(item['gct'] * item['qty']), AMBER_TABLE_TEXT, C
             ))
-            self.cart_table.setItem(row, 5, cell(format_currency(item['total']), AMBER_DARK, C))
+            self.cart_table.setItem(row, 5, cell(format_currency(item['total']), AMBER_TABLE_TEXT, C))
 
             rm = QPushButton("✕")
             rm.setStyleSheet(f"""
@@ -1028,7 +1135,11 @@ class CashierWindow(BaseWindow):
         lbl = QLabel(f"✓  Session #{self._session_id:04d} opened — you can now process sales")
         lbl.setStyleSheet("color:white;font-size:11px;font-weight:600;background:transparent;")
         bl.addWidget(lbl)
-        banner.move(self.width() - banner.width() - 20, 56)
+        # y=100 clears BOTH the 44px topbar and the 50px search/checkout
+        # row below it (44+50=94, +6px gap) — the old y=56 only cleared
+        # the topbar and sat directly on top of the search bar/Checkout
+        # button.
+        banner.move(self.width() - banner.width() - 20, 100)
         banner.show(); banner.raise_()
         QTimer.singleShot(4000, banner.deleteLater)
 
@@ -1045,14 +1156,25 @@ class CashierWindow(BaseWindow):
             }}
         """)
         banner.setFixedHeight(40)
-        banner.setFixedWidth(self.width())
+        # Start after the F-key panel (110px) rather than x=0 — F-key
+        # buttons run the full height of the window, not just the top
+        # strip, so a full-width banner here would sit on top of F1 and
+        # make it unclickable while the banner shows. Starting past the
+        # F-key column keeps every quick-key button usable.
+        _FKEY_PANEL_WIDTH = 110
+        banner.setFixedWidth(self.width() - _FKEY_PANEL_WIDTH)
         bl = QHBoxLayout(banner)
         bl.setContentsMargins(16, 0, 16, 0)
         lbl = QLabel("⚠  Your session has been closed by your supervisor. "
                      "Complete your current sale to be logged out.")
         lbl.setStyleSheet("color:white;font-size:12px;font-weight:600;background:transparent;")
         bl.addWidget(lbl)
-        banner.move(0, 48)   # just below topbar
+        # y=94 clears the topbar (44px) AND the search/checkout row below
+        # it (50px) — the old y=48 sat directly on top of the search bar
+        # and Checkout button, which is a real problem since this banner
+        # is persistent (no auto-dismiss) and its own message tells the
+        # cashier to use exactly those controls to complete their sale.
+        banner.move(_FKEY_PANEL_WIDTH, 94)
         banner.show()
         banner.raise_()
 
@@ -1136,12 +1258,22 @@ class CashierWindow(BaseWindow):
 
     def _fkey_style(self, active: bool) -> str:
         if not active:
-            return f"""QPushButton{{background:{DARK_3};color:#484f58;
-                border:1px solid {DARK_4};border-radius:8px;font-size:10px;}}"""
+            # Empty slot — dashed border, transparent fill, reads clearly
+            # as "not configured" rather than a dimmer version of a live key.
+            # #5b6472 measured ~2.9:1 against the dark panel — under the
+            # 3:1 floor even for this large/muted placeholder text. #8a92a0
+            # clears ~5.5:1 while still reading as clearly "unassigned"
+            # next to a solid, amber-accented active key.
+            return f"""QPushButton{{background:transparent;color:#8a92a0;
+                border:1.5px dashed {DARK_4};border-radius:8px;font-size:10px;}}"""
+        # Assigned key — solid fill + amber left-accent stripe, so it's
+        # immediately visually distinct from an empty slot at a glance,
+        # not just readable by squinting at the text color.
         return f"""
-            QPushButton{{background:{DARK_3};color:white;
-            border:1px solid {DARK_4};border-radius:8px;
-            font-size:10px;text-align:center;}}
+            QPushButton{{background:{DARK_4};color:white;
+            border:1px solid {DARK_4};border-left:4px solid {AMBER};
+            border-radius:8px;font-size:10px;font-weight:600;
+            text-align:center;padding-left:2px;}}
             QPushButton:hover{{background:{AMBER};border-color:{AMBER};color:white;}}
             QPushButton:pressed{{background:{AMBER_DARK};}}
         """
