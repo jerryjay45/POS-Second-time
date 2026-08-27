@@ -131,8 +131,8 @@ CREATE TABLE IF NOT EXISTS products (
     case_product_id        INTEGER REFERENCES products(id)       ON DELETE SET NULL,
     case_variant_group_id  INTEGER REFERENCES variant_groups(id) ON DELETE SET NULL,
 
-    created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at        TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
 
     -- A product is at most one of: alias-group member, variant-group member, case product
     CHECK (
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS stock_adjustments (
     qty_change        INTEGER NOT NULL,
     reason            TEXT    NOT NULL DEFAULT 'Restock',
     adjusted_by       INTEGER DEFAULT NULL,
-    adjusted_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    adjusted_at       TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     CHECK ((product_id IS NULL) != (variant_group_id IS NULL))
 );
 
@@ -222,7 +222,7 @@ def recalculate_selling_prices(group_id: int = None) -> int:
         for r in rows:
             new_price = round(r["cost"] * (1 + r["profit_margin"]), 2)
             con.execute(
-                "UPDATE products SET selling_price = ?, updated_at = datetime('now') WHERE id = ?",
+                "UPDATE products SET selling_price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
                 (new_price, r["id"])
             )
             updated += 1
@@ -359,7 +359,7 @@ def cascade_alias_group_to_cases(con, alias_group_id: int) -> list[dict]:
             case_cost = round(group["cost"] * qty, 4)
             case_price = round(case_cost * (1 + case_profit_pct), 2)
             con.execute(
-                """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now')
+                """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now', 'localtime')
                    WHERE id = ?""",
                 (case_cost, case_price, c["id"])
             )
@@ -453,7 +453,7 @@ def cascade_variant_group_to_cases(con, variant_group_id: int) -> list[dict]:
         case_cost = round(group["cost"] * qty, 4)
         case_price = round(case_cost * (1 + case_profit_pct), 2)
         con.execute(
-            """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now')
+            """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now', 'localtime')
                WHERE id = ?""",
             (case_cost, case_price, c["id"])
         )
@@ -607,7 +607,7 @@ def update_product(product_id: int, **fields) -> bool:
             fields[key] = fields[key].strip().upper()
     set_parts = [f"{k} = ?" for k in fields]
     params = list(fields.values())
-    set_parts.append("updated_at = datetime('now')")
+    set_parts.append("updated_at = datetime('now', 'localtime')")
     params.append(product_id)
     sql = f"UPDATE products SET {', '.join(set_parts)} WHERE id = ?"
     with _conn() as con:
@@ -675,7 +675,7 @@ def cascade_single_cost_to_cases(single_product_id: int) -> list[dict]:
             case_cost = round(single["cost"] * qty, 4)
             case_price = round(case_cost * (1 + case_profit_pct), 2)
             con.execute(
-                """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now')
+                """UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now', 'localtime')
                    WHERE id = ?""",
                 (case_cost, case_price, c["id"])
             )
@@ -726,7 +726,7 @@ def recalculate_all_cases(case_profit_pct: float = None) -> int:
             case_cost = round(source_cost * qty, 4)
             case_price = round(case_cost * (1 + case_profit_pct), 2)
             con.execute(
-                "UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now') WHERE id = ?",
+                "UPDATE products SET cost = ?, selling_price = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
                 (case_cost, case_price, c["id"])
             )
             updated += 1
