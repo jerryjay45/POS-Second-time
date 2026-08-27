@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     change_given    REAL    DEFAULT NULL,
     status          TEXT    NOT NULL DEFAULT 'completed'
                             CHECK(status IN ('completed','voided','refunded')),
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS receipt_items (
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS refunds (
     refund_type     TEXT    NOT NULL CHECK(refund_type IN ('void','partial','full','exchange')),
     reason          TEXT    NOT NULL DEFAULT '',
     amount          REAL    NOT NULL DEFAULT 0.0,  -- computed from refund_items, not caller-supplied
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS refund_items (
