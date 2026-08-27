@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT  NOT NULL,
     role        TEXT    NOT NULL CHECK(role IN ('cashier','supervisor','manager')),
     is_active   INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     opened_by   INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
     closed_by   INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
-    opened_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    opened_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     closed_at   TEXT    DEFAULT NULL,
     total_sales REAL    NOT NULL DEFAULT 0.0,
     status      TEXT    NOT NULL DEFAULT 'open'
@@ -167,7 +167,7 @@ def update_user(user_id: int, full_name: str = None, username: str = None,
     if is_active  is not None: parts.append("is_active = ?");      params.append(int(is_active))
     if not parts:
         return False
-    parts.append("updated_at = datetime('now')")
+    parts.append("updated_at = datetime('now', 'localtime')")
     params.append(user_id)
     with _conn() as con:
         cur = con.execute(
@@ -204,7 +204,7 @@ def close_session(session_id: int, total_sales: float,
     """Close an open session. closed_by is the supervisor/manager who closed it."""
     with _conn() as con:
         cur = con.execute(
-            "UPDATE sessions SET status='closed', closed_at=datetime('now'), "
+            "UPDATE sessions SET status='closed', closed_at=datetime('now', 'localtime'), "
             "total_sales=?, closed_by=? WHERE id=? AND status='open'",
             (total_sales, closed_by, session_id)
         )
