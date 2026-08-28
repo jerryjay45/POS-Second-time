@@ -360,7 +360,7 @@ class CashierWindow(BaseWindow):
 
         self._cart_items_lbl = QLabel("")
         self._cart_items_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cart_items_lbl.setStyleSheet("color:rgba(13,13,13,0.72);font-size:11px;font-weight:500;background:transparent;")
+        self._cart_items_lbl.setStyleSheet(f"color:{DARK};font-size:11px;font-weight:500;background:transparent;")
 
         nav_row = QHBoxLayout()
         prev_btn = QPushButton("←"); prev_btn.setFixedSize(34,34)
@@ -502,7 +502,7 @@ class CashierWindow(BaseWindow):
             # nowhere near readable. Dark text at partial opacity gives the
             # same "quieter than the value" hierarchy while actually
             # passing WCAG AA (~5.2:1).
-            t.setStyleSheet(f"color:rgba(13,13,13,0.72);font-size:{'14' if big else '12'}px;background:transparent;")
+            t.setStyleSheet(f"color:{DARK};font-size:{'14' if big else '12'}px;background:transparent;")
             v = QLabel("$0.00"); v.setAlignment(Qt.AlignmentFlag.AlignCenter)
             # Pure white on amber measured at 2.17:1 — solid dark text
             # gives 8.94:1 on the same background.
