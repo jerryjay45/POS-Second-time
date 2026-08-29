@@ -317,6 +317,32 @@ def theme_names() -> list[str]:
     return list(THEMES.keys())
 
 
+# ── Symbol-glyph font (icon buttons: ✕ ↻ etc.) ──────────────────────────────
+# The app's base font is the bundled "Inter" typeface, which doesn't include
+# symbol/dingbat glyphs like ✕ (U+2715) or ↻ (U+21BB). Qt falls back to
+# whatever the OS provides for missing glyphs, and that fallback differs by
+# platform: Linux's fontconfig routes to a broad symbol font automatically;
+# Windows' default fallback doesn't reliably cover these specific codepoints,
+# so the same button renders fine on Linux and blank on Windows. Icon
+# buttons should call setFont(symbol_font()) rather than relying on the
+# inherited base font's automatic fallback.
+_SYMBOL_FALLBACK_FAMILIES = [
+    "Segoe UI Symbol", "Segoe UI Emoji",   # Windows — pre-installed since Vista/7
+    "Noto Sans Symbols", "DejaVu Sans",    # Linux — common fontconfig fallbacks
+    "Arial",
+]
+
+def symbol_font(point_size: int = 11, bold: bool = True):
+    """A QFont for icon-glyph buttons (✕ ↻ ← → ☑ ☐ etc.) with an explicit
+    symbol-capable fallback chain, instead of relying on the base app
+    font's platform-dependent automatic fallback."""
+    from PyQt6.QtGui import QFont
+    f = QFont(_SYMBOL_FALLBACK_FAMILIES)
+    f.setPointSize(point_size)
+    f.setBold(bold)
+    return f
+
+
 # ── Auto-apply on import (reads saved preference or defaults to amber) ─────────
 def _init():
     try:
