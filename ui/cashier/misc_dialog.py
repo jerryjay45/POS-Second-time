@@ -20,6 +20,7 @@ from ui.shared.theme import (
     DARK, DARK_CARD, WHITE, WARM_WHITE,
     BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, GREEN,
+    symbol_font,
 )
 from core.db_config import gct_rate
 
@@ -56,6 +57,7 @@ class MiscDialog(QDialog):
         t = QLabel("✱  Miscellaneous Item")
         t.setStyleSheet("color:white;font-size:14px;font-weight:700;")
         x = QPushButton("✕"); x.setFixedSize(28, 28)
+        x.setFont(symbol_font())
         x.setCursor(Qt.CursorShape.PointingHandCursor)
         x.setStyleSheet(
             "QPushButton{background:transparent;color:#888;border:none;font-size:16px;}"
