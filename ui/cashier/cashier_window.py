@@ -918,17 +918,15 @@ class CashierWindow(BaseWindow):
             self._refresh_table(); self._update_totals()
 
     def _clear_cart(self):
+        """Clear Cart — always wipes the entire cart immediately.
+        No picker, no confirmation dialog, regardless of the
+        require_remove_auth setting: this button means "remove
+        everything," so there's nothing for a per-item picker to offer,
+        and showing one (as the old code did) while ignoring whatever was
+        checked/unchecked was misleading."""
         if not self.cart: return
-        if get_bool("require_remove_auth", False):
-            from ui.cashier.void_dialog import VoidDialog
-            dlg = VoidDialog(self.cart, pre_select=list(range(len(self.cart))),
-                             mode="void", parent=self)
-            if dlg.exec():
-                self.carts[self.active_cart] = []
-                self._refresh_table(); self._update_totals()
-        else:
-            self.carts[self.active_cart] = []
-            self._refresh_table(); self._update_totals()
+        self.carts[self.active_cart] = []
+        self._refresh_table(); self._update_totals()
 
     # ── Cart navigation ───────────────────────────────────────────────
 
@@ -1065,18 +1063,23 @@ class CashierWindow(BaseWindow):
                 self._refresh_table(); self._update_totals()
 
     def _handle_void(self):
-        """Remove Items button — respects require_remove_auth setting."""
+        """Remove Items button — always shows the item picker so a cashier
+        can remove a subset of the cart. Whether a supervisor/manager
+        password is required to confirm depends on require_remove_auth;
+        the picker itself is no longer gated by that setting (previously,
+        with the setting off, this button wiped the ENTIRE cart instead of
+        letting anything be selected — same bug as Clear Cart ignoring
+        selection, just in the opposite direction)."""
         if not self.cart: return
-        if get_bool("require_remove_auth", False):
-            from ui.cashier.void_dialog import VoidDialog
-            dlg = VoidDialog(self.cart, pre_select=list(range(len(self.cart))),
-                             mode="void", parent=self)
-            if dlg.exec():
-                for it in dlg.voided_items:
-                    if it in self.cart: self.cart.remove(it)
-                self._refresh_table(); self._update_totals()
-        else:
-            self.carts[self.active_cart] = []
+        from ui.cashier.void_dialog import VoidDialog
+        dlg = VoidDialog(
+            self.cart, pre_select=list(range(len(self.cart))),
+            mode="void", require_auth=get_bool("require_remove_auth", False),
+            parent=self,
+        )
+        if dlg.exec():
+            for it in dlg.voided_items:
+                if it in self.cart: self.cart.remove(it)
             self._refresh_table(); self._update_totals()
 
     def _handle_checkout(self):
