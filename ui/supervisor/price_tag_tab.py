@@ -226,23 +226,9 @@ class PriceTagTab(QWidget):
         self.search_inp.setFixedHeight(34)
         self.search_inp.setStyleSheet(self._input_style())
         self.search_inp.textChanged.connect(self._search)
-        clr_btn = QPushButton("✕"); clr_btn.setFixedSize(34, 34)
-        clr_btn.setFont(symbol_font())
-        clr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        clr_btn.setToolTip("Clear search")
-        clr_btn.setStyleSheet(
-            f"QPushButton{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-            f"border-radius:7px;font-size:13px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;border-color:{AMBER};}}")
+        clr_btn = self._icon_btn("✕", "Clear search")
         clr_btn.clicked.connect(lambda: (self.search_inp.clear(), self.search_inp.setFocus()))
-        ref_btn = QPushButton("↻"); ref_btn.setFixedSize(34, 34)
-        ref_btn.setFont(symbol_font())
-        ref_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        ref_btn.setToolTip("Refresh product list")
-        ref_btn.setStyleSheet(
-            f"QPushButton{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-            f"border-radius:7px;font-size:15px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;border-color:{AMBER};}}")
+        ref_btn = self._icon_btn("↻", "Refresh product list")
         ref_btn.clicked.connect(self._load_table)
         sb.addWidget(self.search_inp, stretch=1)
         sb.addWidget(clr_btn)
@@ -661,6 +647,17 @@ class PriceTagTab(QWidget):
             f"font-size:11px;font-weight:600;padding:0 12px;}}"
             f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
+        return b
+
+    def _icon_btn(self, icon, tooltip=""):
+        b = QPushButton(icon); b.setFixedSize(34, 34)
+        b.setToolTip(tooltip)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setStyleSheet(
+            f"QPushButton{{background:{WARM_WHITE};color:{DARK_CARD};"
+            f"border:1.5px solid {BORDER};border-radius:7px;"
+            f"font-size:14px;font-weight:700;}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}")
         return b
 
     def _section_lbl(self, text):
