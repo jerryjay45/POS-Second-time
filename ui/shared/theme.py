@@ -332,12 +332,32 @@ _SYMBOL_FALLBACK_FAMILIES = [
     "Arial",
 ]
 
+_symbol_families_cache = None
+
 def symbol_font(point_size: int = 11, bold: bool = True):
     """A QFont for icon-glyph buttons (✕ ↻ ← → ☑ ☐ etc.) with an explicit
     symbol-capable fallback chain, instead of relying on the base app
-    font's platform-dependent automatic fallback."""
-    from PyQt6.QtGui import QFont
-    f = QFont(_SYMBOL_FALLBACK_FAMILIES)
+    font's platform-dependent automatic fallback.
+
+    Only fallback families actually installed on the running system are
+    used. Handing Qt a family list where none of the names resolve to an
+    installed font (e.g. a minimal Linux install with none of the above
+    installed) can leave the widget with no usable font at all — not just
+    missing symbol glyphs, but blank text everywhere, including tooltips.
+    In that case we fall back to the default app font, which already gets
+    proper automatic per-glyph substitution via fontconfig on Linux.
+    """
+    from PyQt6.QtGui import QFont, QFontDatabase
+    global _symbol_families_cache
+    if _symbol_families_cache is None:
+        installed = set(QFontDatabase.families())
+        _symbol_families_cache = [
+            fam for fam in _SYMBOL_FALLBACK_FAMILIES if fam in installed
+        ]
+    if _symbol_families_cache:
+        f = QFont(_symbol_families_cache)
+    else:
+        f = QFont()  # default app font; relies on automatic glyph fallback
     f.setPointSize(point_size)
     f.setBold(bold)
     return f
