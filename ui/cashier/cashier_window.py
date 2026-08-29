@@ -24,6 +24,7 @@ from ui.shared.theme  import (
     DARK, DARK_2, DARK_3, DARK_4, DARK_CARD,
     WARM_WHITE, WHITE, BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN,
+    symbol_font,
 )
 from core.db_users    import open_session, add_session_sales, get_open_session
 from core.db_config   import get_quick_keys, gct_rate, get_bool
@@ -1012,6 +1013,7 @@ class CashierWindow(BaseWindow):
             self.cart_table.setItem(row, 5, cell(format_currency(item['total']), AMBER_TABLE_TEXT, C))
 
             rm = QPushButton("✕")
+            rm.setFont(symbol_font(point_size=12))
             rm.setStyleSheet(f"""
                 QPushButton{{background:{RED};color:white;border:none;
                 border-radius:4px;font-size:12px;font-weight:800;
