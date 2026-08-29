@@ -97,14 +97,25 @@ def _cur(amount: float, symbol: str = "$") -> str:
     return f"{symbol}{amount:,.2f}"
 
 # Column widths for the "    {name} {qty}x {total}" rows used by both the
-# LINE ITEMS and PRODUCT SUMMARY sections of the Z-report. QTY_W/TOTAL_W
-# are sized generously (qty up to 9999, total up to $99,999.99) because
-# PRODUCT SUMMARY sums across every receipt in the shift, not just one
-# line — a per-item column width (e.g. 3/7) that looks fine for a single
-# sale silently overflows once quantities/totals are aggregated.
+# LINE ITEMS and PRODUCT SUMMARY sections of the Z-report. PRODUCT SUMMARY
+# sums across every receipt in the shift, not just one line, so this needs
+# to be sized for an aggregated total, not a single sale.
+#
+# _TOTAL_W is sized for the formatted string length at each magnitude
+# (with _cur()'s thousands separator, "$" included, no sign — line
+# totals are never negative):
+#   $9,999.99      ->  9 chars
+#   $99,999.99     -> 10 chars
+#   $999,999.99    -> 11 chars   <- sized for this: a fast-moving product
+#                                   summed across a full shift, or one
+#                                   high-ticket line, can plausibly clear
+#                                   six figures in JMD.
+# 9 was one char short even at the $9,999.99/$99,999.99 boundary the old
+# comment claimed to cover — this fixes that too, not just the new
+# six-figure case.
 _ROW_INDENT = 4
 _QTY_W = 4
-_TOTAL_W = 9
+_TOTAL_W = 11
 
 def _item_row(name: str, qty, total_str: str, width: int) -> str:
     """Format one '<name> <qty>x <total>' row, sized to fit `width`."""
