@@ -18,6 +18,7 @@ from ui.shared.theme import (
     DARK, DARK_CARD, WHITE, WARM_WHITE, BORDER, BORDER_LIGHT,
     MUTED, LABEL_TEXT, RED, RED_LIGHT, RED_BORDER,
     GREEN, GREEN_LIGHT, GREEN_BORDER,
+    symbol_font,
 )
 from core.db_checkout import save_receipt
 from core.db_users    import add_session_sales
@@ -68,6 +69,7 @@ class CheckoutDialog(QDialog):
         title.setStyleSheet("color:white;font-size:14px;font-weight:700;")
         close = QPushButton("✕")
         close.setFixedSize(28, 28)
+        close.setFont(symbol_font())
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(
             "QPushButton{background:transparent;color:#888;border:none;font-size:16px;}"
