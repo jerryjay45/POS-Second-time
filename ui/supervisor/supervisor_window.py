@@ -20,6 +20,7 @@ from ui.shared.theme import (
     DARK, DARK_2, DARK_4, DARK_CARD,
     WARM_WHITE, WHITE, BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN, GREEN_LIGHT, BLUE,
+    symbol_font,
 )
 from core.db_products import (
     get_products, get_product_by_id, add_product, update_product,
@@ -583,6 +584,8 @@ class SupervisorWindow(BaseWindow):
                 ("✕",    RED,   lambda _, pid=p["id"]: self._delete_product(pid)),
             ]:
                 b = QPushButton(label); b.setFixedHeight(26)
+                if label == "✕":
+                    b.setFont(symbol_font(point_size=12))
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
                 b.setStyleSheet(
                     f"QPushButton{{background:transparent;color:{color};border:1px solid {color};"
