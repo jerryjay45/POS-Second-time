@@ -240,11 +240,15 @@ class CheckoutDialog(QDialog):
         self._confirm_btn.setFixedHeight(40)
         self._confirm_btn.setEnabled(False)
         self._confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # White text measured ~2.2:1 on amber (enabled) and ~1.5:1 on the
+        # disabled grey — both well under the 4.5:1 floor for the single
+        # most important button in the checkout flow. Dark text clears
+        # ~8.9:1 / ~12.7:1 on the same backgrounds.
         self._confirm_btn.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:8px;font-size:13px;font-weight:700;}}
             QPushButton:hover:enabled{{background:{AMBER_DARK};}}
-            QPushButton:disabled{{background:#D3D1C7;color:white;}}
+            QPushButton:disabled{{background:#D3D1C7;color:{DARK};}}
         """)
         self._confirm_btn.clicked.connect(self._confirm_payment)
 
