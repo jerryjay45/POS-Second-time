@@ -177,8 +177,10 @@ class MiscDialog(QDialog):
         self.add_btn.setFixedHeight(40)
         self.add_btn.setEnabled(False)
         self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # White text on amber measured ~2.2:1 — dark text clears ~8.9:1 on
+        # the same background. Disabled state (MUTED bg) already passed.
         self.add_btn.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:20px;font-size:13px;font-weight:700;padding:0 20px;}}
             QPushButton:hover:enabled{{background:{AMBER_DARK};}}
             QPushButton:disabled{{background:{MUTED};color:white;}}
