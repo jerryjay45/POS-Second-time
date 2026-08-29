@@ -26,6 +26,12 @@ from ui.shared.theme import (
 )
 from core.db_products import get_product_by_barcode, get_products
 
+# AMBER (#EF9F27) as text directly on white measured ~2.2:1 — same failure
+# pattern as elsewhere. Scoped locally rather than changing the shared
+# AMBER constant, which is used correctly as a background/accent color
+# throughout this file.
+AMBER_TEXT_ON_WHITE = "#8a5510"
+
 
 class PriceCheckDialog(QDialog):
     """Standalone price check dialog with live search."""
@@ -97,7 +103,7 @@ class PriceCheckDialog(QDialog):
             }}
             QListWidget::item:selected {{
                 background: {AMBER};
-                color: white;
+                color: {DARK};
             }}
             QListWidget::item:hover {{
                 background: {AMBER_LIGHTEST};
@@ -128,7 +134,7 @@ class PriceCheckDialog(QDialog):
         price_label = QLabel("Price:")
         price_label.setStyleSheet(f"color:{LABEL_TEXT};font-size:11px;font-weight:600;")
         self.result_price = QLabel("")
-        self.result_price.setStyleSheet(f"color:{AMBER};font-size:20px;font-weight:800;")
+        self.result_price.setStyleSheet(f"color:{AMBER_TEXT_ON_WHITE};font-size:20px;font-weight:800;")
         price_row.addWidget(price_label)
         price_row.addWidget(self.result_price)
         price_row.addStretch()
@@ -174,14 +180,14 @@ class PriceCheckDialog(QDialog):
         self.add_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {AMBER};
-                color: white;
+                color: {DARK};
                 border: none;
                 border-radius: 8px;
                 font-size: 12px;
                 font-weight: 600;
             }}
             QPushButton:hover {{ background: {AMBER_DARK}; }}
-            QPushButton:pressed {{ background: #633806; }}
+            QPushButton:pressed {{ background: {AMBER_DARK}; }}
         """)
         self.add_btn.clicked.connect(self._add_to_cart)
 
