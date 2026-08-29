@@ -24,6 +24,7 @@ from ui.shared.theme import (
     DARK, DARK_2, DARK_4, DARK_CARD,
     WARM_WHITE, WHITE, BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN, GREEN_LIGHT, BLUE,
+    symbol_font,
 )
 from core.db_users    import add_user, update_user, delete_user, get_users, get_user_by_id
 from core.db_config   import (
@@ -723,6 +724,7 @@ class ManagerWindow(SupervisorWindow):
 
         refresh_receipt = QPushButton("↻")
         refresh_receipt.setFixedSize(34, 34)
+        refresh_receipt.setFont(symbol_font())
         refresh_receipt.setToolTip("Refresh printer list")
         refresh_receipt.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_receipt.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER};border:1.5px solid {AMBER};border-radius:17px;font-size:14px;font-weight:700;}}QPushButton:hover{{background:{AMBER};color:white;}}")
