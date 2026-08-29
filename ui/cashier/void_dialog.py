@@ -51,14 +51,15 @@ class VoidDialog(QDialog):
     """
 
     def __init__(self, cart: list, pre_select: list = None,
-                 mode: str = "void", parent=None):
+                 mode: str = "void", require_auth: bool = True, parent=None):
         super().__init__(parent)
         self.cart          = cart
         self.pre_select    = pre_select if pre_select is not None else list(range(len(cart)))
         self.mode          = mode
+        self.require_auth  = require_auth
         self.voided_items  = []       # filled on accept
-        self.authorised_by = None     # full_name of authoriser
-        self.authorised_id = None     # user id of authoriser
+        self.authorised_by = None     # full_name of authoriser (stays None when require_auth is False)
+        self.authorised_id = None     # user id of authoriser (stays None when require_auth is False)
 
         title = "Remove Item" if mode == "remove" else "Remove Items"
         self.setWindowTitle(title)
@@ -70,6 +71,12 @@ class VoidDialog(QDialog):
     # ================================================================
     # UI BUILD
     # ================================================================
+
+    def _subtitle_text(self) -> str:
+        item_word = "the item" if self.mode == "remove" else "items"
+        if self.require_auth:
+            return f"Select {item_word} to remove. A supervisor or manager must authorise."
+        return f"Select {item_word} to remove."
 
     def _build_ui(self, title: str):
         lay = QVBoxLayout(self)
@@ -95,9 +102,7 @@ class VoidDialog(QDialog):
         sub_frame.setStyleSheet(f"background:{RED_LIGHT};border-bottom:1px solid {RED_BORDER};")
         sl = QHBoxLayout(sub_frame); sl.setContentsMargins(18, 10, 18, 10)
         sub = QLabel(
-            "Select the item to remove. A supervisor or manager must authorise."
-            if self.mode == "remove" else
-            "Select items to remove. A supervisor or manager must authorise."
+            self._subtitle_text()
         )
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color:{RED};font-size:12px;background:transparent;")
@@ -144,26 +149,30 @@ class VoidDialog(QDialog):
         div.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
         bl.addWidget(div)
 
-        # Auth section
-        auth_lbl = QLabel("Supervisor / Manager Password")
-        auth_lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:11px;font-weight:600;"
-                                "text-transform:uppercase;letter-spacing:0.4px;")
-        bl.addWidget(auth_lbl)
+        # Auth section — only built when a supervisor/manager password is
+        # actually required. When require_auth is False, this dialog is
+        # just an item picker: no password field, no auth check on confirm.
+        if self.require_auth:
+            auth_lbl = QLabel("Supervisor / Manager Password")
+            auth_lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:11px;font-weight:600;"
+                                    "text-transform:uppercase;letter-spacing:0.4px;")
+            bl.addWidget(auth_lbl)
 
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Enter supervisor or manager password…")
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setFixedHeight(42)
-        self.password_input.setStyleSheet(f"""
-            QLineEdit{{background:{WARM_WHITE};color:{DARK_CARD};
-            border:1.5px solid {BORDER};border-radius:8px;
-            padding:0 14px;font-size:14px;}}
-            QLineEdit:focus{{border-color:{RED};background:{WHITE};}}
-        """)
-        self.password_input.returnPressed.connect(self._authorise)
-        bl.addWidget(self.password_input)
+            self.password_input = QLineEdit()
+            self.password_input.setPlaceholderText("Enter supervisor or manager password…")
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.password_input.setFixedHeight(42)
+            self.password_input.setStyleSheet(f"""
+                QLineEdit{{background:{WARM_WHITE};color:{DARK_CARD};
+                border:1.5px solid {BORDER};border-radius:8px;
+                padding:0 14px;font-size:14px;}}
+                QLineEdit:focus{{border-color:{RED};background:{WHITE};}}
+            """)
+            self.password_input.returnPressed.connect(self._confirm)
+            bl.addWidget(self.password_input)
 
-        # Error label — shown as a banner when wrong password entered
+        # Error banner — used for both "wrong password" (auth mode) and
+        # "select at least one item" (either mode), so it always exists.
         self.error_frame = QFrame()
         self.error_frame.setVisible(False)
         self.error_frame.setStyleSheet(
@@ -192,7 +201,7 @@ class VoidDialog(QDialog):
         cancel.clicked.connect(self.reject)
 
         self.confirm_btn = QPushButton(
-            "⊘  Authorise Remove"
+            "⊘  Authorise Remove" if self.require_auth else "⊘  Remove Selected"
         )
         self.confirm_btn.setFixedHeight(40)
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -206,7 +215,7 @@ class VoidDialog(QDialog):
         """)
         self.confirm_btn.setAutoDefault(False)
         self.confirm_btn.setDefault(False)
-        self.confirm_btn.clicked.connect(self._authorise)
+        self.confirm_btn.clicked.connect(self._confirm)
         cancel.setAutoDefault(False)
         cancel.setDefault(False)
         btn_row.addWidget(cancel)
@@ -218,7 +227,10 @@ class VoidDialog(QDialog):
         self._fit_table_to_rows()
         self._update_void_total()
         self.adjustSize()
-        self.password_input.setFocus()
+        if self.require_auth:
+            self.password_input.setFocus()
+        else:
+            self.confirm_btn.setFocus()
 
     # ================================================================
     # TABLE
@@ -268,9 +280,10 @@ class VoidDialog(QDialog):
         if event.key() in (_Qt.Key.Key_Escape,):
             return  # ignore Escape — use Cancel button
         if event.key() in (_Qt.Key.Key_Return, _Qt.Key.Key_Enter):
-            # Only act on Enter if focus is on password field
-            if self.password_input.hasFocus():
-                self._authorise()
+            # Only act on Enter if focus is on the password field — which
+            # only exists when require_auth is True.
+            if self.require_auth and self.password_input.hasFocus():
+                self._confirm()
             return
         super().keyPressEvent(event)
 
@@ -302,33 +315,40 @@ class VoidDialog(QDialog):
             self.confirm_btn.setEnabled(count > 0)
 
     # ================================================================
-    # AUTHORISATION
+    # CONFIRMATION
     # ================================================================
 
-    def _authorise(self):
-        password = self.password_input.text().strip()
-        if not password:
-            self._show_error("Please enter a supervisor or manager password.")
-            return
-
-        # Check which items are selected
+    def _confirm(self):
+        """Unified confirm handler for both modes:
+        - require_auth=True:  validate selection + supervisor/manager password
+        - require_auth=False: validate selection only, no password needed
+        """
+        # Check which items are selected — required either way
         selected = [i for i, c in enumerate(self._checkboxes) if c.isChecked()]
         if not selected:
             self._show_error("Please select at least one item.")
             return
 
-        # Authenticate — must be supervisor or manager
-        auth_user = self._check_supervisor_password(password)
-        if not auth_user:
-            self._show_error("Incorrect password or insufficient permissions. Please try again.")
-            self.password_input.clear()
-            self.password_input.setFocus()
-            return
+        if self.require_auth:
+            password = self.password_input.text().strip()
+            if not password:
+                self._show_error("Please enter a supervisor or manager password.")
+                return
 
-        # Build voided items list
-        self.voided_items  = [self.cart[i] for i in selected]
-        self.authorised_by = auth_user["full_name"]
-        self.authorised_id = auth_user["id"]
+            # Authenticate — must be supervisor or manager
+            auth_user = self._check_supervisor_password(password)
+            if not auth_user:
+                self._show_error("Incorrect password or insufficient permissions. Please try again.")
+                self.password_input.clear()
+                self.password_input.setFocus()
+                return
+
+            self.authorised_by = auth_user["full_name"]
+            self.authorised_id = auth_user["id"]
+
+        # Build voided items list — authorised_by/authorised_id stay None
+        # when require_auth is False, matching their documented default.
+        self.voided_items = [self.cart[i] for i in selected]
         self.accept()
 
     def _show_error(self, msg: str):
