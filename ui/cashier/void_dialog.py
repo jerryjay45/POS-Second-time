@@ -31,6 +31,12 @@ from ui.shared.theme import (
 )
 from core.db_users import get_users, authenticate
 
+# AMBER_DARK (#BA7517) as text on white measured ~3.7:1 for the item
+# table's price cells — under the 4.5:1 floor for this small text.
+# Scoped locally rather than changing the shared constant (used
+# correctly elsewhere as a background/border/hover color in this file).
+AMBER_TEXT_ON_WHITE = "#8a5510"
+
 
 class VoidDialog(QDialog):
     """
@@ -253,7 +259,7 @@ class VoidDialog(QDialog):
 
             self.item_table.setItem(row, 1, cell(item["name"]))
             self.item_table.setItem(row, 2, cell(str(item["qty"]), MUTED, C))
-            self.item_table.setItem(row, 3, cell(format_currency(item['price']), AMBER_DARK, R))
+            self.item_table.setItem(row, 3, cell(format_currency(item['price']), AMBER_TEXT_ON_WHITE, R))
             self.item_table.setItem(row, 4, cell(format_currency(line_total), RED, R))
 
     def keyPressEvent(self, event):
