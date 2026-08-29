@@ -785,7 +785,12 @@ class CashierWindow(BaseWindow):
         lbl = QLabel(f"⚠  Low stock: {name}  ({stock} remaining)")
         lbl.setStyleSheet("color:white;font-size:11px;font-weight:600;background:transparent;")
         bl.addWidget(lbl)
-        banner.move(self.width() - banner.width() - 20, 56)
+        # y=100 clears both the 44px topbar and the 50px search/checkout
+        # row below it — this had the same y=56 bug as the other two
+        # toasts (fixed earlier) but was missed in that pass since it's a
+        # separate function triggered by a different event (low stock on
+        # add-to-cart, not session open/resume).
+        banner.move(self.width() - banner.width() - 20, 100)
         banner.show(); banner.raise_()
         QTimer.singleShot(3500, banner.deleteLater)
 
