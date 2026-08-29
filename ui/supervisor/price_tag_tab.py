@@ -231,18 +231,18 @@ class PriceTagTab(QWidget):
         clr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clr_btn.setToolTip("Clear search")
         clr_btn.setStyleSheet(
-            f"QPushButton{{background:{BORDER};color:{DARK_CARD};border:none;"
+            f"QPushButton{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
             f"border-radius:7px;font-size:13px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;}}")
+            f"QPushButton:hover{{background:{AMBER};color:white;border-color:{AMBER};}}")
         clr_btn.clicked.connect(lambda: (self.search_inp.clear(), self.search_inp.setFocus()))
         ref_btn = QPushButton("↻"); ref_btn.setFixedSize(34, 34)
         ref_btn.setFont(symbol_font())
         ref_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         ref_btn.setToolTip("Refresh product list")
         ref_btn.setStyleSheet(
-            f"QPushButton{{background:{BORDER};color:{DARK_CARD};border:none;"
+            f"QPushButton{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
             f"border-radius:7px;font-size:15px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;}}")
+            f"QPushButton:hover{{background:{AMBER};color:white;border-color:{AMBER};}}")
         ref_btn.clicked.connect(self._load_table)
         sb.addWidget(self.search_inp, stretch=1)
         sb.addWidget(clr_btn)
