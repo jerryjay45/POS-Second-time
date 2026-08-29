@@ -23,6 +23,7 @@ from ui.shared.theme import (
     DARK, DARK_4, DARK_CARD,
     WHITE, WARM_WHITE, BORDER, BORDER_LIGHT,
     MUTED, LABEL_TEXT, GREEN, GREEN_LIGHT,
+    symbol_font,
 )
 from core.db_products import get_products, count_products, get_discount_levels
 from utils.currency import format_currency
@@ -226,6 +227,7 @@ class PriceTagTab(QWidget):
         self.search_inp.setStyleSheet(self._input_style())
         self.search_inp.textChanged.connect(self._search)
         clr_btn = QPushButton("✕"); clr_btn.setFixedSize(34, 34)
+        clr_btn.setFont(symbol_font())
         clr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clr_btn.setToolTip("Clear search")
         clr_btn.setStyleSheet(
@@ -234,6 +236,7 @@ class PriceTagTab(QWidget):
             f"QPushButton:hover{{background:{AMBER};color:white;}}")
         clr_btn.clicked.connect(lambda: (self.search_inp.clear(), self.search_inp.setFocus()))
         ref_btn = QPushButton("↻"); ref_btn.setFixedSize(34, 34)
+        ref_btn.setFont(symbol_font())
         ref_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         ref_btn.setToolTip("Refresh product list")
         ref_btn.setStyleSheet(
