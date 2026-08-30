@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QComboBox, QLabel, QFrame, QHeaderView,
     QSpinBox, QAbstractItemView, QSplitter, QDialog, QDialogButtonBox,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QIcon, QPixmap
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_BG, AMBER_LIGHTEST,
@@ -106,6 +106,157 @@ class HistoryDialog(QDialog):
         )
 
 
+# ── Stock Adjustment Dialog ──────────────────────────────────────────────────
+
+class StockAdjustDialog(QDialog):
+    """Pop-up form for adding/removing stock on a single product — mirrors the
+    pop-up pattern used by ProductDialog on the Products tab."""
+
+    def __init__(self, user: dict, product_id: int, product_name: str,
+                 threshold: int, parent=None):
+        super().__init__(parent)
+        self.user       = user
+        self.product_id = product_id
+        self.threshold  = threshold
+        self.changed    = False  # set True if any adjustment was made
+
+        self.setWindowTitle(f"Adjust Stock — {product_name}")
+        self.setMinimumWidth(380)
+        self.setStyleSheet(f"QDialog{{background:{WARM_WHITE};}}")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 18, 18, 18); lay.setSpacing(10)
+
+        self.title_lbl = QLabel(product_name)
+        self.title_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:15px;font-weight:700;")
+        self.title_lbl.setWordWrap(True)
+        lay.addWidget(self.title_lbl)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
+        lay.addWidget(sep)
+
+        self.stock_lbl = QLabel("")
+        self.stock_lbl.setStyleSheet(f"color:{MUTED};font-size:13px;font-weight:500;")
+        self.stock_lbl.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(self.stock_lbl)
+
+        lay.addWidget(self._section_lbl("Quantity"))
+        self.qty = QSpinBox()
+        self.qty.setMinimum(1); self.qty.setMaximum(99999); self.qty.setValue(1)
+        self.qty.setFixedHeight(36)
+        self.qty.setStyleSheet(
+            f"QSpinBox{{background:{WHITE};border:2px solid {BORDER};"
+            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
+            f"QSpinBox:focus{{border-color:{AMBER};}}"
+        )
+        lay.addWidget(self.qty)
+
+        lay.addWidget(self._section_lbl("Reason"))
+        self.reason = QComboBox()
+        self.reason.addItems(["Restock", "Damaged", "Correction", "Return", "Other"])
+        self.reason.setFixedHeight(36)
+        self.reason.setStyleSheet(
+            f"QComboBox{{background:{WHITE};border:2px solid {BORDER};"
+            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
+            f"QComboBox:focus{{border-color:{AMBER};}}"
+            f"QComboBox::drop-down{{border:none;width:20px;}}"
+        )
+        lay.addWidget(self.reason)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        add_btn = QPushButton("＋  Add Stock"); add_btn.setFixedHeight(36)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(
+            f"QPushButton{{background:transparent;color:{GREEN};"
+            f"border:1.5px solid {GREEN};border-radius:7px;"
+            f"font-size:12px;font-weight:700;}}"
+            f"QPushButton:hover{{background:{GREEN};color:white;}}"
+        )
+        add_btn.clicked.connect(self._do_add)
+
+        rem_btn = QPushButton("−  Remove Stock"); rem_btn.setFixedHeight(36)
+        rem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        rem_btn.setStyleSheet(
+            f"QPushButton{{background:transparent;color:{RED};"
+            f"border:1.5px solid {RED};border-radius:7px;"
+            f"font-size:12px;font-weight:700;}}"
+            f"QPushButton:hover{{background:{RED};color:white;}}"
+        )
+        rem_btn.clicked.connect(self._do_remove)
+        btn_row.addWidget(add_btn, stretch=1); btn_row.addWidget(rem_btn, stretch=1)
+        lay.addLayout(btn_row)
+
+        self.feedback = QLabel("")
+        self.feedback.setStyleSheet(f"color:{GREEN};font-size:12px;font-weight:600;")
+        self.feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.feedback)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
+        lay.addWidget(sep2)
+
+        bottom_row = QHBoxLayout(); bottom_row.setSpacing(8)
+        hist_btn = QPushButton("📋  View History"); hist_btn.setFixedHeight(34)
+        hist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        hist_btn.setStyleSheet(
+            f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
+            f"border:1.5px solid {BORDER};border-radius:7px;font-size:12px;"
+            f"font-weight:600;padding:0 12px;}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
+        )
+        hist_btn.clicked.connect(self._show_history)
+        close_btn = QPushButton("Close"); close_btn.setFixedHeight(34)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(
+            f"QPushButton{{background:transparent;color:{MUTED};"
+            f"border:1.5px solid {BORDER};border-radius:7px;"
+            f"font-size:12px;font-weight:600;}}"
+            f"QPushButton:hover{{background:{BORDER};color:{DARK_CARD};}}"
+        )
+        close_btn.clicked.connect(self.accept)
+        bottom_row.addWidget(hist_btn, stretch=1); bottom_row.addWidget(close_btn)
+        lay.addLayout(bottom_row)
+
+        self._refresh_stock_label()
+
+    def _refresh_stock_label(self):
+        p = get_product_by_id(self.product_id)
+        stock = p["effective_stock"] if p else 0
+        color = _stock_color(stock, self.threshold)
+        text = f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span>"
+        if p and p.get("variant_group_id"):
+            text += f" (shared with {p.get('variant_group_name', 'variant group')})"
+        self.stock_lbl.setText(text)
+
+    def _do_add(self):
+        qty, reason = self.qty.value(), self.reason.currentText()
+        adjust_stock(self.product_id, qty, reason, self.user["id"])
+        self.changed = True
+        self._refresh_stock_label()
+        self.feedback.setStyleSheet(f"color:{GREEN};font-size:12px;font-weight:600;")
+        self.feedback.setText(f"✓  Added {qty} unit{'s' if qty != 1 else ''}")
+
+    def _do_remove(self):
+        qty, reason = self.qty.value(), self.reason.currentText()
+        adjust_stock(self.product_id, -qty, reason, self.user["id"])
+        self.changed = True
+        self._refresh_stock_label()
+        self.feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:12px;font-weight:600;")
+        self.feedback.setText(f"✓  Removed {qty} unit{'s' if qty != 1 else ''}")
+
+    def _show_history(self):
+        p = get_product_by_id(self.product_id)
+        name = p["name"] if p else self.title_lbl.text()
+        dlg = HistoryDialog(self.product_id, name, self)
+        dlg.exec()
+
+    def _section_lbl(self, text: str) -> QLabel:
+        l = QLabel(text.upper())
+        l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;")
+        return l
+
+
 # ── Stock Tab ─────────────────────────────────────────────────────────────────
 
 class StockTab(QWidget):
@@ -114,13 +265,43 @@ class StockTab(QWidget):
         super().__init__(parent)
         self.user                   = user
         self._threshold             = get_int("low_stock_threshold", 5)
-        self._selected_product_id   = None
-        self._selected_product_name = ""
         self._pg_page               = 0
         self._pg_per_page           = 50
         self._pg_search             = ""
+        self._pool_search           = ""
         self._build_ui()
         self._refresh_all()
+
+    # ── Icon helpers ─────────────────────────────────────────────────────────
+
+    def _draw_clear_icon(self, color: str, size: int = 19) -> QIcon:
+        """Hand-painted 'X' glyph — same approach as the Products tab's clear
+        button, since font-fallback for dingbats isn't reliable everywhere."""
+        scale = 4
+        s = size * scale
+        pm = QPixmap(s, s); pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(color)); pen.setWidthF(s * 0.12)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        m = s * 0.22
+        p.drawLine(int(m), int(m), int(s - m), int(s - m))
+        p.drawLine(int(s - m), int(m), int(m), int(s - m))
+        p.end()
+        pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        return QIcon(pm)
+
+    def _clear_search_btn(self, tooltip: str = "Clear search") -> QPushButton:
+        b = QPushButton(); b.setFixedSize(34, 34)
+        b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setIcon(self._draw_clear_icon(DARK_CARD)); b.setIconSize(QSize(16, 16))
+        b.setStyleSheet(
+            f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};border-radius:7px;}}"
+            f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
+        )
+        return b
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
@@ -173,6 +354,14 @@ class StockTab(QWidget):
             f"QLineEdit:focus{{border-color:{AMBER};}}"
         )
         self.search_inp.returnPressed.connect(self._search)
+
+        clr_btn = self._clear_search_btn("Clear search")
+        clr_btn.clicked.connect(lambda: (
+            self.search_inp.clear(),
+            self.search_inp.setFocus(),
+            self._search(),
+        ))
+
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["All Stock", "Low Stock", "Out of Stock"])
         self.filter_combo.setFixedHeight(34); self.filter_combo.setFixedWidth(130)
@@ -184,7 +373,10 @@ class StockTab(QWidget):
         )
         self.filter_combo.currentIndexChanged.connect(self._search)
         refresh_btn = self._outline_btn("↻  Refresh"); refresh_btn.clicked.connect(self._refresh_all)
-        tb.addWidget(self.search_inp, stretch=1); tb.addWidget(self.filter_combo); tb.addWidget(refresh_btn)
+        tb.addWidget(self.search_inp, stretch=1)
+        tb.addWidget(clr_btn)
+        tb.addSpacing(4)
+        tb.addWidget(self.filter_combo); tb.addWidget(refresh_btn)
         ll.addLayout(tb)
 
         # Stock table — 4 cols: Product, Group, Stock, Actions
@@ -203,6 +395,7 @@ class StockTab(QWidget):
         self.stock_table.verticalHeader().setVisible(False)
         self.stock_table.setShowGrid(False)
         self.stock_table.setStyleSheet(self._table_style())
+        self.stock_table.doubleClicked.connect(self._on_stock_dbl_click)
         ll.addWidget(self.stock_table, stretch=1)
 
         # Pagination
@@ -219,122 +412,13 @@ class StockTab(QWidget):
         pg_row.addStretch()
         ll.addLayout(pg_row)
 
-        # ── Right: adjustment panel ───────────────────────────────────
+        # ── Right: variant group stock list ─────────────────────────────
+        # (Replaces the old inline adjustment panel — single-product stock
+        # adjustments now happen in a pop-up StockAdjustDialog instead, the
+        # same pop-up pattern the Products tab uses for add/edit.)
         right = QFrame()
         right.setStyleSheet(f"background:{WHITE};border-radius:10px;border:1px solid {BORDER};")
-        rl = QVBoxLayout(right); rl.setContentsMargins(16, 16, 16, 16); rl.setSpacing(10)
-
-        # Title
-        self.adj_title = QLabel("Select a product to adjust")
-        self.adj_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;")
-        self.adj_title.setWordWrap(True)
-        rl.addWidget(self.adj_title)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
-        rl.addWidget(sep)
-
-        # Current stock display
-        self.adj_stock_lbl = QLabel("")
-        self.adj_stock_lbl.setStyleSheet(f"color:{MUTED};font-size:13px;font-weight:500;")
-        rl.addWidget(self.adj_stock_lbl)
-
-        # Quantity
-        rl.addWidget(self._section_lbl("Quantity"))
-        self.adj_qty = QSpinBox()
-        self.adj_qty.setMinimum(1); self.adj_qty.setMaximum(99999); self.adj_qty.setValue(1)
-        self.adj_qty.setFixedHeight(36)
-        self.adj_qty.setStyleSheet(
-            f"QSpinBox{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
-            f"QSpinBox:focus{{border-color:{AMBER};}}"
-        )
-        rl.addWidget(self.adj_qty)
-
-        # Reason
-        rl.addWidget(self._section_lbl("Reason"))
-        self.adj_reason = QComboBox()
-        self.adj_reason.addItems(["Restock", "Damaged", "Correction", "Return", "Other"])
-        self.adj_reason.setFixedHeight(36)
-        self.adj_reason.setStyleSheet(
-            f"QComboBox{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
-            f"QComboBox:focus{{border-color:{AMBER};}}"
-            f"QComboBox::drop-down{{border:none;width:20px;}}"
-        )
-        rl.addWidget(self.adj_reason)
-
-        # Add / Remove / Cancel buttons
-        rl.addWidget(self._section_lbl("Action"))
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-        self.adj_add_btn = QPushButton("＋  Add Stock"); self.adj_add_btn.setFixedHeight(36)
-        self.adj_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.adj_add_btn.setEnabled(False)
-        self.adj_add_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{GREEN};"
-            f"border:1.5px solid {GREEN};border-radius:7px;"
-            f"font-size:12px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{GREEN};color:white;}}"
-            f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER};}}"
-        )
-        self.adj_add_btn.clicked.connect(self._do_add)
-
-        self.adj_rem_btn = QPushButton("−  Remove Stock"); self.adj_rem_btn.setFixedHeight(36)
-        self.adj_rem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.adj_rem_btn.setEnabled(False)
-        self.adj_rem_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{RED};"
-            f"border:1.5px solid {RED};border-radius:7px;"
-            f"font-size:12px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{RED};color:white;}}"
-            f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER};}}"
-        )
-        self.adj_rem_btn.clicked.connect(self._do_remove)
-
-        self.adj_cancel_btn = QPushButton("Cancel"); self.adj_cancel_btn.setFixedHeight(36)
-        self.adj_cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.adj_cancel_btn.setEnabled(False)
-        self.adj_cancel_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{MUTED};"
-            f"border:1.5px solid {BORDER};border-radius:7px;"
-            f"font-size:12px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{BORDER};color:{DARK_CARD};}}"
-            f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER};}}"
-        )
-        self.adj_cancel_btn.clicked.connect(self._cancel_adjust)
-        btn_row.addWidget(self.adj_add_btn, stretch=1)
-        btn_row.addWidget(self.adj_rem_btn, stretch=1)
-        btn_row.addWidget(self.adj_cancel_btn)
-        rl.addLayout(btn_row)
-
-        # Feedback label
-        self.adj_feedback = QLabel("")
-        self.adj_feedback.setStyleSheet(f"color:{GREEN};font-size:12px;font-weight:600;")
-        self.adj_feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rl.addWidget(self.adj_feedback)
-
-        rl.addStretch()
-
-        # History button at bottom
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
-        rl.addWidget(sep2)
-        self.hist_btn = self._outline_btn("📋  View Adjustment History")
-        self.hist_btn.setEnabled(False)
-        self.hist_btn.clicked.connect(self._show_history)
-        rl.addWidget(self.hist_btn)
-
-        splitter.addWidget(left); splitter.addWidget(right)
-        splitter.setStretchFactor(0, 1); splitter.setStretchFactor(1, 1)
-        root.addWidget(splitter, stretch=1)
-
-        # ── Variant Group Stock section — hidden when no variant groups exist ──
-        self.pool_section = QFrame()
-        self.pool_section.setStyleSheet(
-            f"QFrame{{background:{WHITE};border:1px solid {BORDER};border-radius:10px;}}"
-        )
-        pl = QVBoxLayout(self.pool_section)
-        pl.setContentsMargins(12, 10, 12, 10); pl.setSpacing(8)
+        rl = QVBoxLayout(right); rl.setContentsMargins(10, 10, 10, 10); rl.setSpacing(8)
 
         pool_hdr = QHBoxLayout()
         pool_title = QLabel("🔗  Variant Group Stock")
@@ -351,7 +435,30 @@ class StockTab(QWidget):
         )
         self.pool_refresh_btn.clicked.connect(self._load_pool_table)
         pool_hdr.addWidget(self.pool_refresh_btn)
-        pl.addLayout(pool_hdr)
+        rl.addLayout(pool_hdr)
+
+        # Search bar — same pattern as the Products tab's search bar
+        pool_tb = QHBoxLayout(); pool_tb.setSpacing(6)
+        self.pool_search_inp = QLineEdit()
+        self.pool_search_inp.setPlaceholderText("🔍  Search variant groups…")
+        self.pool_search_inp.setFixedHeight(34)
+        self.pool_search_inp.setStyleSheet(
+            f"QLineEdit{{background:{WHITE};border:2px solid {BORDER};"
+            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
+            f"QLineEdit:focus{{border-color:{AMBER};}}"
+        )
+        self.pool_search_inp.returnPressed.connect(self._pool_search_fn)
+        self.pool_search_inp.textChanged.connect(self._pool_search_fn)
+
+        pool_clr_btn = self._clear_search_btn("Clear search")
+        pool_clr_btn.clicked.connect(lambda: (
+            self.pool_search_inp.clear(),
+            self.pool_search_inp.setFocus(),
+        ))
+
+        pool_tb.addWidget(self.pool_search_inp, stretch=1)
+        pool_tb.addWidget(pool_clr_btn)
+        rl.addLayout(pool_tb)
 
         # 4 columns now — "Case Qty" dropped: units-per-case lives on each
         # case PRODUCT (case_qty), not on the variant group itself, since a
@@ -371,12 +478,18 @@ class StockTab(QWidget):
         self.pool_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.pool_table.verticalHeader().setVisible(False)
         self.pool_table.setShowGrid(False)
-        self.pool_table.setMaximumHeight(200)
         self.pool_table.setStyleSheet(self._table_style())
-        pl.addWidget(self.pool_table)
+        rl.addWidget(self.pool_table, stretch=1)
 
-        self.pool_section.setVisible(False)
-        root.addWidget(self.pool_section)
+        self.pool_empty_lbl = QLabel("No variant groups have been set up yet.")
+        self.pool_empty_lbl.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.pool_empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pool_empty_lbl.setVisible(False)
+        rl.addWidget(self.pool_empty_lbl)
+
+        splitter.addWidget(left); splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1); splitter.setStretchFactor(1, 1)
+        root.addWidget(splitter, stretch=1)
 
     # ── Data ──────────────────────────────────────────────────────────────────
 
@@ -405,12 +518,20 @@ class StockTab(QWidget):
         self.alert_frame.setVisible(True)
 
     def _load_pool_table(self):
-        """Populate the Variant Group Stock section. Hidden if none exist."""
+        """Populate the Variant Group Stock panel, filtered by search text."""
         groups = get_variant_groups()
+        if self._pool_search:
+            groups = [g for g in groups if self._pool_search.lower() in g["name"].lower()]
+
+        self.pool_table.setVisible(bool(groups))
+        self.pool_empty_lbl.setVisible(not groups)
+        if not get_variant_groups():
+            self.pool_empty_lbl.setText("No variant groups have been set up yet.")
+        elif not groups:
+            self.pool_empty_lbl.setText("No variant groups match your search.")
         if not groups:
-            self.pool_section.setVisible(False)
+            self.pool_table.setRowCount(0)
             return
-        self.pool_section.setVisible(True)
         self.pool_table.setRowCount(0)
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
 
@@ -491,6 +612,10 @@ class StockTab(QWidget):
         self._pg_search = self.search_inp.text().strip()
         self._load_stock_table()
 
+    def _pool_search_fn(self):
+        self._pool_search = self.pool_search_inp.text().strip()
+        self._load_pool_table()
+
     def _load_stock_table(self):
         search = self._pg_search
         flt    = self.filter_combo.currentIndex()
@@ -538,7 +663,7 @@ class StockTab(QWidget):
             act = QWidget(); al = QHBoxLayout(act)
             al.setContentsMargins(4, 2, 4, 2); al.setSpacing(4)
             for label, color, cb in [
-                ("Adjust",  AMBER, lambda _, pid=p["id"], pname=p["name"]: self._select_product(pid, pname)),
+                ("Adjust",  AMBER, lambda _, pid=p["id"], pname=p["name"]: self._open_adjust_dialog(pid, pname)),
                 ("History", BLUE,  lambda _, pid=p["id"], pname=p["name"]: self._open_history(pid, pname)),
             ]:
                 b = QPushButton(label); b.setFixedHeight(26)
@@ -557,70 +682,23 @@ class StockTab(QWidget):
         self._pg_prev.setEnabled(self._pg_page > 0 and flt == 0)
         self._pg_next.setEnabled(self._pg_page < pages - 1 and flt == 0)
 
-    def _select_product(self, product_id: int, product_name: str):
-        """Load product into the right panel for adjustment."""
-        self._selected_product_id   = product_id
-        self._selected_product_name = product_name
-        p = get_product_by_id(product_id)
-        stock = p["effective_stock"] if p else 0
-        color = _stock_color(stock, self._threshold)
-        self.adj_title.setText(product_name)
-        self.adj_stock_lbl.setText(
-            f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span>"
-        )
-        if p and p.get("variant_group_id"):
-            self.adj_stock_lbl.setText(
-                f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span> "
-                f"(shared with {p.get('variant_group_name', 'variant group')})"
-            )
-        self.adj_stock_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self.adj_qty.setValue(1)
-        self.adj_reason.setCurrentIndex(0)
-        self.adj_feedback.setText("")
-        self.adj_add_btn.setEnabled(True)
-        self.adj_rem_btn.setEnabled(True)
-        self.adj_cancel_btn.setEnabled(True)
-        self.hist_btn.setEnabled(True)
-
-    def _cancel_adjust(self):
-        """Deselect product and reset the right panel."""
-        self._selected_product_id   = None
-        self._selected_product_name = ""
-        self.stock_table.clearSelection()
-        self.adj_title.setText("Select a product to adjust")
-        self.adj_stock_lbl.setText("")
-        self.adj_qty.setValue(1)
-        self.adj_reason.setCurrentIndex(0)
-        self.adj_feedback.setText("")
-        self.adj_add_btn.setEnabled(False)
-        self.adj_rem_btn.setEnabled(False)
-        self.adj_cancel_btn.setEnabled(False)
-        self.hist_btn.setEnabled(False)
-
-    def _do_add(self):
-        if not self._selected_product_id: return
-        qty    = self.adj_qty.value()
-        reason = self.adj_reason.currentText()
-        adjust_stock(self._selected_product_id, qty, reason, self.user["id"])
-        self._select_product(self._selected_product_id, self._selected_product_name)
-        self._load_stock_table(); self._refresh_alert()
-        self.adj_feedback.setStyleSheet(f"color:{GREEN};font-size:12px;font-weight:600;")
-        self.adj_feedback.setText(f"✓  Added {qty} unit{'s' if qty != 1 else ''}")
-
-    def _do_remove(self):
-        if not self._selected_product_id: return
-        qty    = self.adj_qty.value()
-        reason = self.adj_reason.currentText()
-        adjust_stock(self._selected_product_id, -qty, reason, self.user["id"])
-        self._select_product(self._selected_product_id, self._selected_product_name)
-        self._load_stock_table(); self._refresh_alert()
-        self.adj_feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:12px;font-weight:600;")
-        self.adj_feedback.setText(f"✓  Removed {qty} unit{'s' if qty != 1 else ''}")
-
-    def _show_history(self):
-        if not self._selected_product_id: return
-        dlg = HistoryDialog(self._selected_product_id, self._selected_product_name, self)
+    def _open_adjust_dialog(self, product_id: int, product_name: str):
+        """Open the pop-up stock-adjustment dialog for a single product —
+        mirrors ProductDialog's add/edit pop-up on the Products tab."""
+        dlg = StockAdjustDialog(self.user, product_id, product_name, self._threshold, self)
         dlg.exec()
+        if dlg.changed:
+            self._load_stock_table()
+            self._refresh_alert()
+
+    def _on_stock_dbl_click(self, index):
+        """Double-clicking a row opens the adjust dialog, same as the
+        Products tab's double-click-to-edit behaviour."""
+        name_item = self.stock_table.item(index.row(), 0)
+        if not name_item: return
+        pid = name_item.data(Qt.ItemDataRole.UserRole)
+        if pid is not None:
+            self._open_adjust_dialog(pid, name_item.text())
 
     def _open_history(self, product_id: int, product_name: str):
         """Open history dialog directly from the table action button."""
