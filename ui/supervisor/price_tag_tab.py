@@ -15,8 +15,8 @@ from PyQt6.QtWidgets import (
     QHeaderView, QAbstractItemView, QSplitter, QCheckBox, QMessageBox,
     QFileDialog,
 )
-from PyQt6.QtCore import Qt, QRectF, QSizeF, QMarginsF
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPageSize, QPageLayout
+from PyQt6.QtCore import Qt, QRectF, QSizeF, QMarginsF, QSize, QPointF
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPageSize, QPageLayout, QIcon, QPixmap, QPolygonF
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_BG, AMBER_LIGHTEST,
@@ -226,9 +226,9 @@ class PriceTagTab(QWidget):
         self.search_inp.setFixedHeight(34)
         self.search_inp.setStyleSheet(self._input_style())
         self.search_inp.textChanged.connect(self._search)
-        clr_btn = self._icon_btn("✕", "Clear search")
+        clr_btn = self._icon_btn("clear", "Clear search")
         clr_btn.clicked.connect(lambda: (self.search_inp.clear(), self.search_inp.setFocus()))
-        ref_btn = self._icon_btn("↻", "Refresh product list")
+        ref_btn = self._icon_btn("refresh", "Refresh product list")
         ref_btn.clicked.connect(self._load_table)
         sb.addWidget(self.search_inp, stretch=1)
         sb.addWidget(clr_btn)
@@ -649,15 +649,70 @@ class PriceTagTab(QWidget):
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
         return b
 
-    def _icon_btn(self, icon, tooltip=""):
-        b = QPushButton(icon); b.setFixedSize(34, 34)
+    def _draw_icon(self, kind: str, color: str, size: int = 19) -> QIcon:
+        """Paints a small icon by hand (no text glyphs, no font dependency
+        at all) so it renders identically regardless of what fonts/icon
+        themes are installed on the machine running the app."""
+        import math
+        scale = 4  # supersample, then downscale, for crisp small icons
+        s = size * scale
+        pm = QPixmap(s, s)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(color))
+        pen.setWidthF(s * 0.12)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        m = s * 0.20  # margin
+        if kind == "clear":
+            p.drawLine(int(m), int(m), int(s - m), int(s - m))
+            p.drawLine(int(s - m), int(m), int(m), int(s - m))
+        elif kind == "refresh":
+            rect = QRectF(m, m, s - 2 * m, s - 2 * m)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            start_deg, span_deg = 60, 265
+            p.drawArc(rect, start_deg * 16, span_deg * 16)
+            cx, cy = rect.center().x(), rect.center().y()
+            r = rect.width() / 2
+
+            def pt(deg):
+                a = math.radians(deg)
+                return cx + r * math.cos(a), cy - r * math.sin(a)
+
+            # Empirically-sampled tangent at the arc's start point (avoids
+            # hand-derived trig sign errors): take two nearby points on the
+            # circle and use their difference as the arrow direction.
+            ax, ay = pt(start_deg)
+            bx, by = pt(start_deg + 10)
+            dx, dy = ax - bx, ay - by
+            L = math.hypot(dx, dy); dx, dy = dx / L, dy / L
+            nx, ny = (cx - ax) / r, (cy - ay) / r  # inward normal
+            head = s * 0.30
+            tip    = QPointF(ax + dx * head, ay + dy * head)
+            base_a = QPointF(ax - nx * head * 0.4, ay - ny * head * 0.4)
+            base_b = QPointF(ax + nx * head * 0.4, ay + ny * head * 0.4)
+            p.setBrush(QBrush(QColor(color)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawPolygon(QPolygonF([tip, base_a, base_b]))
+        p.end()
+        pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        return QIcon(pm)
+
+    def _icon_btn(self, kind: str, tooltip: str = ""):
+        """kind is 'clear' or 'refresh' — icons are hand-drawn (see
+        _draw_icon) rather than relying on a Unicode glyph + font fallback,
+        since that fallback isn't reliable across all systems."""
+        b = QPushButton(); b.setFixedSize(34, 34)
         b.setToolTip(tooltip)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setIcon(self._draw_icon(kind, DARK_CARD))
+        b.setIconSize(QSize(19, 19))
         b.setStyleSheet(
-            f"QPushButton{{background:{WARM_WHITE};color:{DARK_CARD};"
-            f"border:1.5px solid {BORDER};border-radius:7px;"
-            f"font-size:14px;font-weight:700;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}")
+            f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};"
+            f"border-radius:7px;}}"
+            f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}")
         return b
 
     def _section_lbl(self, text):
