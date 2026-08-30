@@ -5,7 +5,7 @@ Stock management tab.
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLineEdit, QComboBox, QLabel, QFrame, QHeaderView,
-    QSpinBox, QAbstractItemView, QSplitter, QDialog, QDialogButtonBox,
+    QSpinBox, QAbstractItemView, QSplitter, QDialog,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QIcon, QPixmap
@@ -31,6 +31,108 @@ def _stock_color(stock: int, threshold: int) -> str:
     return GREEN
 
 
+# ── Hand-painted icons ───────────────────────────────────────────────────────
+# Drawn glyphs instead of Unicode dingbats/emoji: emoji fonts render wildly
+# differently across Windows/macOS/Linux (different weight, color, baseline),
+# which is exactly the kind of OS-dependent look this pass is removing.
+
+def _draw_icon(kind: str, color: str, size: int = 19) -> QIcon:
+    scale = 4
+    s = size * scale
+    pm = QPixmap(s, s); pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color)); pen.setWidthF(s * 0.12)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    p.setPen(pen)
+    m = s * 0.22
+    if kind == "clear":
+        p.drawLine(int(m), int(m), int(s - m), int(s - m))
+        p.drawLine(int(s - m), int(m), int(m), int(s - m))
+    elif kind == "history":
+        # Clock face: circle + hour/minute hands, universally read as "history".
+        r = s * 0.34
+        cx = cy = s / 2
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+        p.drawLine(int(cx), int(cy), int(cx), int(cy - r * 0.55))
+        p.drawLine(int(cx), int(cy), int(cx + r * 0.45), int(cy + r * 0.1))
+    p.end()
+    pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+    return QIcon(pm)
+
+
+def _icon_btn(kind: str, tooltip: str = "") -> QPushButton:
+    """Small square icon-only button (search-bar clear buttons etc.)."""
+    b = QPushButton(); b.setFixedSize(34, 34)
+    b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setIcon(_draw_icon(kind, DARK_CARD)); b.setIconSize(QSize(16, 16))
+    b.setStyleSheet(
+        f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};"
+        f"border-radius:7px;outline:none;}}"
+        f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
+        f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
+    )
+    return b
+
+
+def _text_btn(text: str, color: str, height: int = 36, filled_hover: bool = True) -> QPushButton:
+    """Outlined text button with color, and every visual state (hover/pressed/
+    disabled/focus) spelled out explicitly, so nothing is left for the OS's
+    native button chrome to render."""
+    b = QPushButton(text); b.setFixedHeight(height)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    hover_bg = color if filled_hover else AMBER_LIGHTEST
+    hover_fg = "white" if filled_hover else color
+    b.setStyleSheet(
+        f"QPushButton{{background:transparent;color:{color};"
+        f"border:1.5px solid {color};border-radius:7px;"
+        f"font-size:12px;font-weight:700;padding:0 10px;outline:none;}}"
+        f"QPushButton:hover{{background:{hover_bg};color:{hover_fg};}}"
+        f"QPushButton:pressed{{background:{color};color:white;}}"
+        f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER};background:transparent;}}"
+    )
+    return b
+
+
+def _lineedit_style() -> str:
+    return (
+        f"QLineEdit{{background:{WHITE};border:2px solid {BORDER};"
+        f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};outline:none;}}"
+        f"QLineEdit:hover{{border-color:{AMBER_LIGHTEST};}}"
+        f"QLineEdit:focus{{border-color:{AMBER};}}"
+    )
+
+
+def _combobox_style(font_size: int = 13) -> str:
+    return (
+        f"QComboBox{{background:{WHITE};border:2px solid {BORDER};"
+        f"border-radius:7px;padding:0 10px;font-size:{font_size}px;color:{DARK_CARD};outline:none;}}"
+        f"QComboBox:hover{{border-color:{AMBER_LIGHTEST};}}"
+        f"QComboBox:focus{{border-color:{AMBER};}}"
+        f"QComboBox::drop-down{{border:none;width:22px;}}"
+        f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
+        f"selection-background-color:{AMBER_LIGHTEST};selection-color:{DARK_CARD};"
+        f"border:1px solid {BORDER};outline:none;}}"
+    )
+
+
+def _neutral_btn(text: str, height: int = 36) -> QPushButton:
+    """Neutral (gray) outlined button — used for Cancel/Close-style actions."""
+    b = QPushButton(text); b.setFixedHeight(height)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setStyleSheet(
+        f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
+        f"border:1.5px solid {BORDER};border-radius:7px;"
+        f"font-size:12px;font-weight:600;padding:0 12px;outline:none;}}"
+        f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};background:{AMBER_LIGHTEST};}}"
+        f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
+        f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};background:transparent;}}"
+    )
+    return b
+
+
 # ── History Dialog ────────────────────────────────────────────────────────────
 
 class HistoryDialog(QDialog):
@@ -41,11 +143,11 @@ class HistoryDialog(QDialog):
         self.setStyleSheet(f"QDialog{{background:{WARM_WHITE};}}")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 16, 16, 16); lay.setSpacing(10)
+        lay.setContentsMargins(18, 18, 18, 18); lay.setSpacing(12)
 
         # Header
-        title = QLabel(f"📋  History for {product_name}")
-        title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;")
+        title = QLabel(f"History for {product_name}")
+        title.setStyleSheet(f"color:{DARK_CARD};font-size:15px;font-weight:700;")
         lay.addWidget(title)
 
         # Table
@@ -89,9 +191,13 @@ class HistoryDialog(QDialog):
 
         lay.addWidget(table, stretch=1)
 
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch()
+        close_btn = _neutral_btn("Close", height=34)
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.reject)
+        bottom_row.addWidget(close_btn)
+        lay.addLayout(bottom_row)
 
     def _table_style(self) -> str:
         return (
@@ -121,68 +227,60 @@ class StockAdjustDialog(QDialog):
         self.changed    = False  # set True if any adjustment was made
 
         self.setWindowTitle(f"Adjust Stock — {product_name}")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(400)
         self.setStyleSheet(f"QDialog{{background:{WARM_WHITE};}}")
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 18, 18, 18); lay.setSpacing(10)
+        lay.setContentsMargins(20, 20, 20, 20); lay.setSpacing(14)
 
         self.title_lbl = QLabel(product_name)
-        self.title_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:15px;font-weight:700;")
+        self.title_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:16px;font-weight:700;")
         self.title_lbl.setWordWrap(True)
         lay.addWidget(self.title_lbl)
 
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
-        lay.addWidget(sep)
-
-        self.stock_lbl = QLabel("")
-        self.stock_lbl.setStyleSheet(f"color:{MUTED};font-size:13px;font-weight:500;")
-        self.stock_lbl.setTextFormat(Qt.TextFormat.RichText)
-        lay.addWidget(self.stock_lbl)
+        # ── Current-stock stat card ──────────────────────────────────
+        # An explicit bordered/background card rather than a bare label, so
+        # the number reads clearly regardless of OS font rendering.
+        self.stock_card = QFrame()
+        self.stock_card.setStyleSheet(
+            f"QFrame{{background:{WARM_WHITE};border:1.5px solid {BORDER};border-radius:9px;}}"
+        )
+        sc = QVBoxLayout(self.stock_card)
+        sc.setContentsMargins(14, 10, 14, 10); sc.setSpacing(2)
+        sc.addWidget(self._section_lbl("Current Stock"))
+        self.stock_value_lbl = QLabel("—")
+        self.stock_value_lbl.setStyleSheet("font-size:22px;font-weight:800;")
+        sc.addWidget(self.stock_value_lbl)
+        self.stock_note_lbl = QLabel("")
+        self.stock_note_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;font-weight:500;")
+        self.stock_note_lbl.setWordWrap(True)
+        self.stock_note_lbl.setVisible(False)
+        sc.addWidget(self.stock_note_lbl)
+        lay.addWidget(self.stock_card)
 
         lay.addWidget(self._section_lbl("Quantity"))
         self.qty = QSpinBox()
         self.qty.setMinimum(1); self.qty.setMaximum(99999); self.qty.setValue(1)
-        self.qty.setFixedHeight(36)
+        self.qty.setFixedHeight(38)
         self.qty.setStyleSheet(
             f"QSpinBox{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
+            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};outline:none;}}"
             f"QSpinBox:focus{{border-color:{AMBER};}}"
+            f"QSpinBox:hover{{border-color:{AMBER_LIGHTEST};}}"
         )
         lay.addWidget(self.qty)
 
         lay.addWidget(self._section_lbl("Reason"))
         self.reason = QComboBox()
         self.reason.addItems(["Restock", "Damaged", "Correction", "Return", "Other"])
-        self.reason.setFixedHeight(36)
-        self.reason.setStyleSheet(
-            f"QComboBox{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
-            f"QComboBox:focus{{border-color:{AMBER};}}"
-            f"QComboBox::drop-down{{border:none;width:20px;}}"
-        )
+        self.reason.setFixedHeight(38)
+        self.reason.setStyleSheet(_combobox_style(13))
         lay.addWidget(self.reason)
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-        add_btn = QPushButton("＋  Add Stock"); add_btn.setFixedHeight(36)
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{GREEN};"
-            f"border:1.5px solid {GREEN};border-radius:7px;"
-            f"font-size:12px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{GREEN};color:white;}}"
-        )
+        add_btn = _text_btn("＋  Add Stock", GREEN)
         add_btn.clicked.connect(self._do_add)
-
-        rem_btn = QPushButton("−  Remove Stock"); rem_btn.setFixedHeight(36)
-        rem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        rem_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{RED};"
-            f"border:1.5px solid {RED};border-radius:7px;"
-            f"font-size:12px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{RED};color:white;}}"
-        )
+        rem_btn = _text_btn("−  Remove Stock", RED)
         rem_btn.clicked.connect(self._do_remove)
         btn_row.addWidget(add_btn, stretch=1); btn_row.addWidget(rem_btn, stretch=1)
         lay.addLayout(btn_row)
@@ -190,30 +288,18 @@ class StockAdjustDialog(QDialog):
         self.feedback = QLabel("")
         self.feedback.setStyleSheet(f"color:{GREEN};font-size:12px;font-weight:600;")
         self.feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.feedback.setFixedHeight(18)
         lay.addWidget(self.feedback)
 
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
-        lay.addWidget(sep2)
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"background:{BORDER_LIGHT};max-height:1px;border:none;")
+        lay.addWidget(sep)
 
         bottom_row = QHBoxLayout(); bottom_row.setSpacing(8)
-        hist_btn = QPushButton("📋  View History"); hist_btn.setFixedHeight(34)
-        hist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        hist_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
-            f"border:1.5px solid {BORDER};border-radius:7px;font-size:12px;"
-            f"font-weight:600;padding:0 12px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
-        )
+        hist_btn = _neutral_btn("View History", height=36)
+        hist_btn.setIcon(_draw_icon("history", LABEL_TEXT)); hist_btn.setIconSize(QSize(15, 15))
         hist_btn.clicked.connect(self._show_history)
-        close_btn = QPushButton("Close"); close_btn.setFixedHeight(34)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{MUTED};"
-            f"border:1.5px solid {BORDER};border-radius:7px;"
-            f"font-size:12px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{BORDER};color:{DARK_CARD};}}"
-        )
+        close_btn = _neutral_btn("Close", height=36)
         close_btn.clicked.connect(self.accept)
         bottom_row.addWidget(hist_btn, stretch=1); bottom_row.addWidget(close_btn)
         lay.addLayout(bottom_row)
@@ -224,10 +310,15 @@ class StockAdjustDialog(QDialog):
         p = get_product_by_id(self.product_id)
         stock = p["effective_stock"] if p else 0
         color = _stock_color(stock, self.threshold)
-        text = f"Current stock: <span style='color:{color};font-weight:700;'>{stock} units</span>"
+        self.stock_value_lbl.setStyleSheet(f"color:{color};font-size:22px;font-weight:800;")
+        self.stock_value_lbl.setText(f"{stock} unit{'s' if stock != 1 else ''}")
         if p and p.get("variant_group_id"):
-            text += f" (shared with {p.get('variant_group_name', 'variant group')})"
-        self.stock_lbl.setText(text)
+            self.stock_note_lbl.setText(
+                f"Shared with {p.get('variant_group_name', 'variant group')}"
+            )
+            self.stock_note_lbl.setVisible(True)
+        else:
+            self.stock_note_lbl.setVisible(False)
 
     def _do_add(self):
         qty, reason = self.qty.value(), self.reason.currentText()
@@ -272,36 +363,8 @@ class StockTab(QWidget):
         self._build_ui()
         self._refresh_all()
 
-    # ── Icon helpers ─────────────────────────────────────────────────────────
-
-    def _draw_clear_icon(self, color: str, size: int = 19) -> QIcon:
-        """Hand-painted 'X' glyph — same approach as the Products tab's clear
-        button, since font-fallback for dingbats isn't reliable everywhere."""
-        scale = 4
-        s = size * scale
-        pm = QPixmap(s, s); pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(color)); pen.setWidthF(s * 0.12)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        m = s * 0.22
-        p.drawLine(int(m), int(m), int(s - m), int(s - m))
-        p.drawLine(int(s - m), int(m), int(m), int(s - m))
-        p.end()
-        pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation)
-        return QIcon(pm)
-
     def _clear_search_btn(self, tooltip: str = "Clear search") -> QPushButton:
-        b = QPushButton(); b.setFixedSize(34, 34)
-        b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setIcon(self._draw_clear_icon(DARK_CARD)); b.setIconSize(QSize(16, 16))
-        b.setStyleSheet(
-            f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};border-radius:7px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
-        )
-        return b
+        return _icon_btn("clear", tooltip)
 
     # ── Build ─────────────────────────────────────────────────────────────────
 
@@ -348,11 +411,7 @@ class StockTab(QWidget):
         self.search_inp = QLineEdit()
         self.search_inp.setPlaceholderText("🔍  Search by product name or group…")
         self.search_inp.setFixedHeight(34)
-        self.search_inp.setStyleSheet(
-            f"QLineEdit{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
-            f"QLineEdit:focus{{border-color:{AMBER};}}"
-        )
+        self.search_inp.setStyleSheet(_lineedit_style())
         self.search_inp.returnPressed.connect(self._search)
 
         clr_btn = self._clear_search_btn("Clear search")
@@ -365,12 +424,7 @@ class StockTab(QWidget):
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["All Stock", "Low Stock", "Out of Stock"])
         self.filter_combo.setFixedHeight(34); self.filter_combo.setFixedWidth(130)
-        self.filter_combo.setStyleSheet(
-            f"QComboBox{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:12px;color:{DARK_CARD};}}"
-            f"QComboBox:focus{{border-color:{AMBER};}}"
-            f"QComboBox::drop-down{{border:none;width:20px;}}"
-        )
+        self.filter_combo.setStyleSheet(_combobox_style(12))
         self.filter_combo.currentIndexChanged.connect(self._search)
         refresh_btn = self._outline_btn("↻  Refresh"); refresh_btn.clicked.connect(self._refresh_all)
         tb.addWidget(self.search_inp, stretch=1)
@@ -442,11 +496,7 @@ class StockTab(QWidget):
         self.pool_search_inp = QLineEdit()
         self.pool_search_inp.setPlaceholderText("🔍  Search variant groups…")
         self.pool_search_inp.setFixedHeight(34)
-        self.pool_search_inp.setStyleSheet(
-            f"QLineEdit{{background:{WHITE};border:2px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:13px;color:{DARK_CARD};}}"
-            f"QLineEdit:focus{{border-color:{AMBER};}}"
-        )
+        self.pool_search_inp.setStyleSheet(_lineedit_style())
         self.pool_search_inp.returnPressed.connect(self._pool_search_fn)
         self.pool_search_inp.textChanged.connect(self._pool_search_fn)
 
@@ -558,7 +608,8 @@ class StockTab(QWidget):
             add_spin.setValue(1); add_spin.setFixedHeight(28)
             add_spin.setStyleSheet(
                 f"QSpinBox{{background:{WHITE};border:1px solid {BORDER};"
-                f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};}}"
+                f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};outline:none;}}"
+                f"QSpinBox:focus{{border-color:{AMBER};}}"
             )
             add_btn = QPushButton("＋ Add")
             add_btn.setFixedHeight(28)
@@ -566,8 +617,9 @@ class StockTab(QWidget):
             add_btn.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{GREEN};"
                 f"border:1px solid {GREEN};border-radius:5px;"
-                f"font-size:11px;font-weight:700;padding:0 6px;}}"
+                f"font-size:11px;font-weight:700;padding:0 6px;outline:none;}}"
                 f"QPushButton:hover{{background:{GREEN};color:white;}}"
+                f"QPushButton:pressed{{background:{GREEN};color:white;border-color:{DARK_CARD};}}"
             )
             gid = g["id"]
             uid = self.user["id"]
@@ -584,7 +636,8 @@ class StockTab(QWidget):
             rem_spin.setValue(1); rem_spin.setFixedHeight(28)
             rem_spin.setStyleSheet(
                 f"QSpinBox{{background:{WHITE};border:1px solid {BORDER};"
-                f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};}}"
+                f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};outline:none;}}"
+                f"QSpinBox:focus{{border-color:{AMBER};}}"
             )
             rem_btn = QPushButton("− Remove")
             rem_btn.setFixedHeight(28)
@@ -592,8 +645,9 @@ class StockTab(QWidget):
             rem_btn.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{RED};"
                 f"border:1px solid {RED};border-radius:5px;"
-                f"font-size:11px;font-weight:700;padding:0 6px;}}"
+                f"font-size:11px;font-weight:700;padding:0 6px;outline:none;}}"
                 f"QPushButton:hover{{background:{RED};color:white;}}"
+                f"QPushButton:pressed{{background:{RED};color:white;border-color:{DARK_CARD};}}"
             )
             rem_btn.clicked.connect(
                 lambda _, gid=gid, sp=rem_spin: self._pool_adjust(gid, -sp.value(), uid)
@@ -671,8 +725,9 @@ class StockTab(QWidget):
                 b.setStyleSheet(
                     f"QPushButton{{background:transparent;color:{color};"
                     f"border:1px solid {color};border-radius:5px;"
-                    f"font-size:11px;font-weight:600;padding:0 8px;}}"
+                    f"font-size:11px;font-weight:600;padding:0 8px;outline:none;}}"
                     f"QPushButton:hover{{background:{color};color:white;}}"
+                    f"QPushButton:pressed{{background:{color};color:white;border-color:{DARK_CARD};}}"
                 )
                 b.clicked.connect(cb); al.addWidget(b)
             al.addStretch()
@@ -715,16 +770,7 @@ class StockTab(QWidget):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _outline_btn(self, text: str) -> QPushButton:
-        b = QPushButton(text); b.setFixedHeight(34)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
-            f"border:1.5px solid {BORDER};border-radius:7px;font-size:12px;"
-            f"font-weight:600;padding:0 12px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
-            f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}"
-        )
-        return b
+        return _neutral_btn(text, height=34)
 
     def _section_lbl(self, text: str) -> QLabel:
         l = QLabel(text.upper())
