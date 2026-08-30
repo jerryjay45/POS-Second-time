@@ -48,8 +48,10 @@ class ProductDialog(QDialog):
         self.user = user
         self._editing_product_id = editing_id
         self.setModal(True)
-        self.setMinimumWidth(440)
-        self.setMaximumHeight(780)
+        self.setMinimumSize(820, 560)
+        self.setMaximumSize(980, 720)
+        self.resize(880, 680)
+        self.setSizeGripEnabled(True)
         self.setStyleSheet(f"background:{WHITE};")
         self._build_ui()
         if editing_id:
@@ -143,35 +145,40 @@ class ProductDialog(QDialog):
             l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;")
             return l
 
-        # ── Section 1: Identity ───────────────────────────────────────
-        lay.addWidget(_section("Identity"))
+        # ── Top split: Identity+Pricing (left) | Discounts+Flags (right) ─
+        top_row = QHBoxLayout(); top_row.setSpacing(24)
+        left_col  = QVBoxLayout(); left_col.setSpacing(8)
+        right_col = QVBoxLayout(); right_col.setSpacing(8)
+
+        # ── Section 1: Identity (left column) ─────────────────────────
+        left_col.addWidget(_section("Identity"))
         self.f_barcode = self._field("Barcode", "Scan or type barcode")
         self.f_name    = self._field("Name",    "e.g. COCA COLA 330ML")
         for lbl, inp in [self.f_barcode, self.f_name]:
-            lay.addWidget(lbl); lay.addWidget(inp)
+            left_col.addWidget(lbl); left_col.addWidget(inp)
 
-        # ── Section 2: Pricing ────────────────────────────────────────
-        lay.addSpacing(4)
-        lay.addWidget(_divider())
-        lay.addSpacing(2)
-        lay.addWidget(_section("Pricing"))
+        # ── Section 2: Pricing (left column) ──────────────────────────
+        left_col.addSpacing(4)
+        left_col.addWidget(_divider())
+        left_col.addSpacing(2)
+        left_col.addWidget(_section("Pricing"))
 
         self.f_cost = self._field("Cost", "0.00")
         self.f_cost[1].setValidator(QDoubleValidator(0, 999999, 2))
         self.f_cost[1].textChanged.connect(self._calc_selling_price)
-        lay.addWidget(self.f_cost[0]); lay.addWidget(self.f_cost[1])
+        left_col.addWidget(self.f_cost[0]); left_col.addWidget(self.f_cost[1])
 
-        lay.addWidget(self._flabel("Selling Price"))
+        left_col.addWidget(self._flabel("Selling Price"))
         self.f_price = QLineEdit(); self.f_price.setReadOnly(True); self.f_price.setFixedHeight(36)
         self.f_price.setStyleSheet(f"QLineEdit{{background:#0d1a10;color:{GREEN};border:1px solid #1a3a20;border-radius:6px;padding:0 10px;font-size:14px;font-weight:700;}}")
         self.f_price_hint = QLabel(""); self.f_price_hint.setStyleSheet(f"color:{MUTED};font-size:10px;")
-        lay.addWidget(self.f_price); lay.addWidget(self.f_price_hint)
+        left_col.addWidget(self.f_price); left_col.addWidget(self.f_price_hint)
 
-        lay.addSpacing(2)
-        lay.addWidget(self._flabel("Product Group"))
+        left_col.addSpacing(2)
+        left_col.addWidget(self._flabel("Product Group"))
         self.f_group = QComboBox(); self.f_group.setStyleSheet(self._combo_style())
         self.f_group.currentIndexChanged.connect(self._calc_selling_price)
-        self._populate_groups(); lay.addWidget(self.f_group)
+        self._populate_groups(); left_col.addWidget(self.f_group)
 
         grp_row = QHBoxLayout(); grp_row.setSpacing(8)
         alias_col   = QVBoxLayout(); alias_col.setSpacing(4)
@@ -184,13 +191,11 @@ class ProductDialog(QDialog):
         self.f_variant_group = SearchableGroupCombo("variant")
         variant_col.addWidget(self.f_variant_group)
         grp_row.addLayout(alias_col); grp_row.addLayout(variant_col)
-        lay.addLayout(grp_row)
+        left_col.addLayout(grp_row)
+        left_col.addStretch()
 
-        # ── Section 3: Discounts ──────────────────────────────────────
-        lay.addSpacing(4)
-        lay.addWidget(_divider())
-        lay.addSpacing(2)
-        lay.addWidget(_section("Discounts"))
+        # ── Section 3: Discounts (right column) ───────────────────────
+        right_col.addWidget(_section("Discounts"))
         disc_row = QHBoxLayout(); disc_row.setSpacing(8)
         d1_col = QVBoxLayout(); d1_col.setSpacing(4)
         d2_col = QVBoxLayout(); d2_col.setSpacing(4)
@@ -216,19 +221,24 @@ class ProductDialog(QDialog):
                 self.f_disc2.currentData() == "custom"))
 
         disc_row.addLayout(d1_col); disc_row.addLayout(d2_col)
-        lay.addLayout(disc_row)
+        right_col.addLayout(disc_row)
 
-        # ── Section 4: Flags ──────────────────────────────────────────
-        lay.addSpacing(4)
-        lay.addWidget(_divider())
-        lay.addSpacing(2)
-        lay.addWidget(_section("Flags"))
+        # ── Section 4: Flags (right column) ───────────────────────────
+        right_col.addSpacing(4)
+        right_col.addWidget(_divider())
+        right_col.addSpacing(2)
+        right_col.addWidget(_section("Flags"))
         flags_row = QHBoxLayout(); flags_row.setSpacing(16)
         self.t_gct  = self._toggle("GCT Applicable", True)
         self.t_case = self._toggle("Case Item")
         self.t_case.stateChanged.connect(self._on_case_toggled)
         flags_row.addWidget(self.t_gct); flags_row.addWidget(self.t_case); flags_row.addStretch()
-        lay.addLayout(flags_row)
+        right_col.addLayout(flags_row)
+        right_col.addStretch()
+
+        top_row.addLayout(left_col, stretch=1)
+        top_row.addLayout(right_col, stretch=1)
+        lay.addLayout(top_row)
 
         # ── Case Box — shown when "Case Item" is ticked ─────────────
         self.case_box = QFrame(); self.case_box.setVisible(False)
@@ -248,28 +258,34 @@ class ProductDialog(QDialog):
         self.case_mode_linked.toggled.connect(self._on_case_mode_changed)
 
         # ── Mode 1 panel: linked to a specific single product ─────────
+        # Split into a selector column (left) and a restock column (right)
+        # so it uses the dialog's extra width instead of stacking tall.
         self.case_mode1_frame = QFrame()
         self.case_mode1_frame.setStyleSheet("background:transparent;border:none;")
-        m1_lay = QVBoxLayout(self.case_mode1_frame); m1_lay.setContentsMargins(0,4,0,0); m1_lay.setSpacing(6)
-        m1_lay.addWidget(self._flabel("Parent Single Product"))
+        m1_outer = QHBoxLayout(self.case_mode1_frame); m1_outer.setContentsMargins(0,4,0,0); m1_outer.setSpacing(20)
+        m1_left = QVBoxLayout(); m1_left.setSpacing(6)
+        m1_right = QVBoxLayout(); m1_right.setSpacing(6)
+
+        m1_left.addWidget(self._flabel("Parent Single Product"))
         from ui.shared.searchable_product_combo import SearchableProductCombo
         self.f_case_parent = SearchableProductCombo()
         self.f_case_parent.selectionChanged.connect(lambda pid, name: self._on_case_parent_changed())
-        m1_lay.addWidget(self.f_case_parent)
+        m1_left.addWidget(self.f_case_parent)
         self.f_case_cost_hint = QLabel("")
         self.f_case_cost_hint.setStyleSheet(f"color:{MUTED};font-size:10px;")
-        m1_lay.addWidget(self.f_case_cost_hint)
-        m1_lay.addWidget(self._flabel("Units per Case"))
+        m1_left.addWidget(self.f_case_cost_hint)
+        m1_left.addWidget(self._flabel("Units per Case"))
         self.f_case_qty = QSpinBox(); self.f_case_qty.setMinimum(1); self.f_case_qty.setMaximum(9999)
         self.f_case_qty.setStyleSheet(self._input_style())
         self.f_case_qty.valueChanged.connect(self._on_case_parent_changed)
-        m1_lay.addWidget(self.f_case_qty)
-        m1_lay.addWidget(_divider())
-        m1_lay.addWidget(self._flabel("Restock via Case"))
+        m1_left.addWidget(self.f_case_qty)
+        m1_left.addStretch()
+
+        m1_right.addWidget(self._flabel("Restock via Case"))
         self.case_stock_lbl = QLabel("Select a parent product to see stock.")
         self.case_stock_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:11px;font-weight:600;")
         self.case_stock_lbl.setWordWrap(True)
-        m1_lay.addWidget(self.case_stock_lbl)
+        m1_right.addWidget(self.case_stock_lbl)
         m1_restock_row = QHBoxLayout(); m1_restock_row.setSpacing(6)
         self.case_restock_qty = QSpinBox()
         self.case_restock_qty.setMinimum(1); self.case_restock_qty.setMaximum(9999)
@@ -295,17 +311,26 @@ class ProductDialog(QDialog):
         self.case_restock_remove_btn.clicked.connect(self._case_restock_remove)
         m1_restock_row.addWidget(self.case_restock_add_btn)
         m1_restock_row.addWidget(self.case_restock_remove_btn)
-        m1_lay.addLayout(m1_restock_row)
+        m1_right.addLayout(m1_restock_row)
         self.case_restock_feedback = QLabel("")
         self.case_restock_feedback.setStyleSheet(f"font-size:10px;font-weight:600;")
-        m1_lay.addWidget(self.case_restock_feedback)
+        m1_right.addWidget(self.case_restock_feedback)
+        m1_right.addStretch()
+
+        m1_outer.addLayout(m1_left, stretch=1)
+        m1_outer.addLayout(m1_right, stretch=1)
         cb_lay.addWidget(self.case_mode1_frame)
 
         # ── Mode 2 panel: linked to a variant group ─────────────────────
+        # Same left/right split as Mode 1: selectors on the left, the
+        # restock controls on the right.
         self.case_mode2_frame = QFrame(); self.case_mode2_frame.setVisible(False)
         self.case_mode2_frame.setStyleSheet("background:transparent;border:none;")
-        m2_lay = QVBoxLayout(self.case_mode2_frame); m2_lay.setContentsMargins(0,4,0,0); m2_lay.setSpacing(6)
-        m2_lay.addWidget(self._flabel("Variant Group"))
+        m2_outer = QHBoxLayout(self.case_mode2_frame); m2_outer.setContentsMargins(0,4,0,0); m2_outer.setSpacing(20)
+        m2_left = QVBoxLayout(); m2_left.setSpacing(6)
+        m2_right = QVBoxLayout(); m2_right.setSpacing(6)
+
+        m2_left.addWidget(self._flabel("Variant Group"))
         m2_grp_row = QHBoxLayout(); m2_grp_row.setSpacing(6)
         self.f_case_variant_group_combo = QComboBox()
         self.f_case_variant_group_combo.setStyleSheet(self._input_style())
@@ -322,22 +347,23 @@ class ProductDialog(QDialog):
             f"QPushButton:hover{{background:{AMBER_DARK};}}")
         new_grp_btn.clicked.connect(self._create_variant_group_inline)
         m2_grp_row.addWidget(new_grp_btn)
-        m2_lay.addLayout(m2_grp_row)
+        m2_left.addLayout(m2_grp_row)
         self.case_grp_info_lbl = QLabel("")
         self.case_grp_info_lbl.setStyleSheet(f"color:{MUTED};font-size:10px;")
         self.case_grp_info_lbl.setWordWrap(True)
-        m2_lay.addWidget(self.case_grp_info_lbl)
-        m2_lay.addWidget(self._flabel("Units per Case (for this product)"))
+        m2_left.addWidget(self.case_grp_info_lbl)
+        m2_left.addWidget(self._flabel("Units per Case (for this product)"))
         self.f_case_qty2 = QSpinBox(); self.f_case_qty2.setMinimum(1); self.f_case_qty2.setMaximum(9999)
         self.f_case_qty2.setStyleSheet(self._input_style())
         self.f_case_qty2.valueChanged.connect(self._on_case_variant_group_changed)
-        m2_lay.addWidget(self.f_case_qty2)
-        m2_lay.addWidget(_divider())
-        m2_lay.addWidget(self._flabel("Restock Variant Group Stock"))
+        m2_left.addWidget(self.f_case_qty2)
+        m2_left.addStretch()
+
+        m2_right.addWidget(self._flabel("Restock Variant Group Stock"))
         self.pool_stock_lbl = QLabel("Select a variant group to see its stock.")
         self.pool_stock_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:11px;font-weight:600;")
         self.pool_stock_lbl.setWordWrap(True)
-        m2_lay.addWidget(self.pool_stock_lbl)
+        m2_right.addWidget(self.pool_stock_lbl)
         m2_restock_row = QHBoxLayout(); m2_restock_row.setSpacing(6)
         self.pool_restock_qty = QSpinBox()
         self.pool_restock_qty.setMinimum(1); self.pool_restock_qty.setMaximum(9999)
@@ -363,10 +389,14 @@ class ProductDialog(QDialog):
         self.pool_restock_remove_btn.clicked.connect(self._case_variant_group_restock_remove)
         m2_restock_row.addWidget(self.pool_restock_add_btn)
         m2_restock_row.addWidget(self.pool_restock_remove_btn)
-        m2_lay.addLayout(m2_restock_row)
+        m2_right.addLayout(m2_restock_row)
         self.pool_restock_feedback = QLabel("")
         self.pool_restock_feedback.setStyleSheet(f"font-size:10px;font-weight:600;")
-        m2_lay.addWidget(self.pool_restock_feedback)
+        m2_right.addWidget(self.pool_restock_feedback)
+        m2_right.addStretch()
+
+        m2_outer.addLayout(m2_left, stretch=1)
+        m2_outer.addLayout(m2_right, stretch=1)
         cb_lay.addWidget(self.case_mode2_frame)
 
         lay.addWidget(self.case_box)
