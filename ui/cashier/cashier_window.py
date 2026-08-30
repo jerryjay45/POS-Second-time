@@ -918,15 +918,40 @@ class CashierWindow(BaseWindow):
             self._refresh_table(); self._update_totals()
 
     def _clear_cart(self):
-        """Clear Cart — always wipes the entire cart immediately.
-        No picker, no confirmation dialog, regardless of the
-        require_remove_auth setting: this button means "remove
-        everything," so there's nothing for a per-item picker to offer,
-        and showing one (as the old code did) while ignoring whatever was
-        checked/unchecked was misleading."""
+        """Clear Cart — always removes the entire cart, never a subset
+        (no item picker/checkboxes, since there's nothing to choose here).
+        When require_remove_auth is on, still gates behind a supervisor/
+        manager password — clearing a cart is a removal action just like
+        Remove Items, so it gets the same authorisation requirement, just
+        without the pointless per-item selection UI. When the setting is
+        off, a plain "are you sure?" confirmation still guards against a
+        single misclick wiping an entire in-progress sale with no warning
+        at all (there's no password gate in this path, so this is the
+        only thing standing between one click and losing the whole cart)."""
         if not self.cart: return
-        self.carts[self.active_cart] = []
-        self._refresh_table(); self._update_totals()
+        if get_bool("require_remove_auth", False):
+            from ui.cashier.void_dialog import VoidDialog
+            dlg = VoidDialog(
+                self.cart, pre_select=list(range(len(self.cart))),
+                mode="clear", require_auth=True, parent=self,
+            )
+            if dlg.exec():
+                self.carts[self.active_cart] = []
+                self._refresh_table(); self._update_totals()
+        else:
+            count = len(self.cart)
+            total = sum(it.get("total", it["price"] * it["qty"]) for it in self.cart)
+            reply = QMessageBox.question(
+                self, "Clear Cart?",
+                f"Remove all {count} item{'s' if count != 1 else ''} from this cart "
+                f"({format_currency(total)})?\nThis cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            self.carts[self.active_cart] = []
+            self._refresh_table(); self._update_totals()
 
     # ── Cart navigation ───────────────────────────────────────────────
 
