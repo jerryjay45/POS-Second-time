@@ -34,6 +34,12 @@ from core.db_config   import (
 )
 from core.db_products import get_products, get_product_by_id, get_groups, add_group, delete_group, update_group_margin, recalculate_all_cases
 
+# AMBER (#EF9F27) used directly as text on white measured ~2.2:1 — same
+# failure pattern found and fixed throughout the cashier section. Scoped
+# locally rather than changing the shared AMBER constant, which is used
+# correctly elsewhere in this file as a background/accent color.
+AMBER_TEXT_ON_WHITE = "#8a5510"
+
 
 # ================================================================
 # PRODUCT SEARCH WIDGET  (Google-style live search dropdown)
@@ -258,7 +264,7 @@ class ManagerWindow(SupervisorWindow):
 
     def _usr_populate(self, users):
         self.usr_table.setRowCount(0)
-        role_colors = {"cashier":BLUE,"supervisor":AMBER,"manager":RED}
+        role_colors = {"cashier":BLUE,"supervisor":AMBER_TEXT_ON_WHITE,"manager":RED}
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
         for u in users:
             row = self.usr_table.rowCount(); self.usr_table.insertRow(row)
@@ -272,7 +278,7 @@ class ManagerWindow(SupervisorWindow):
             stat.setForeground(QColor(GREEN if u["is_active"] else RED)); stat.setTextAlignment(C)
             edit = QPushButton("Edit"); edit.setFixedHeight(26)
             edit.setCursor(Qt.CursorShape.PointingHandCursor)
-            edit.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER};border:1px solid {AMBER};border-radius:5px;font-size:11px;}}QPushButton:hover{{background:{AMBER};color:white;}}")
+            edit.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1px solid {AMBER};border-radius:5px;font-size:11px;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}")
             edit.clicked.connect(lambda _, uid=u["id"]: self._usr_open_edit(uid))
             cell = QWidget(); cl = QHBoxLayout(cell); cl.setContentsMargins(4,2,4,2); cl.addWidget(edit)
             for col, item in enumerate([name,user,role,stat]):
