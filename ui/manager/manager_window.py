@@ -1109,10 +1109,14 @@ class ManagerWindow(SupervisorWindow):
         return tab
 
     def _on_import_complete(self):
-        """Refresh groups and discount combos in the Products form after a DBF import."""
-        self._populate_groups()
-        self._populate_discount_levels(self.f_disc1)
-        self._populate_discount_levels(self.f_disc2)
+        """Refresh the Products list after a DBF import.
+
+        The Products tab's add/edit form is now a pop-up (ProductDialog,
+        opened on demand) rather than an always-visible panel, so there's
+        no persistent group/discount combo to refresh here anymore — just
+        reload the product table so imported rows show up immediately."""
+        self._pg_page = 0
+        self._load_products(self.product_search.text())
 
     def _build_quickkeys_tab(self):
         w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
