@@ -61,7 +61,7 @@ class VoidDialog(QDialog):
         self.authorised_by = None     # full_name of authoriser (stays None when require_auth is False)
         self.authorised_id = None     # user id of authoriser (stays None when require_auth is False)
 
-        title = "Remove Item" if mode == "remove" else "Remove Items"
+        title = "Remove Item" if mode == "remove" else ("Clear Cart" if mode == "clear" else "Remove Items")
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(480)
@@ -73,10 +73,18 @@ class VoidDialog(QDialog):
     # ================================================================
 
     def _subtitle_text(self) -> str:
+        if self.mode == "clear":
+            return ("The entire cart will be cleared. A supervisor or manager must authorise."
+                    if self.require_auth else "The entire cart will be cleared.")
         item_word = "the item" if self.mode == "remove" else "items"
         if self.require_auth:
             return f"Select {item_word} to remove. A supervisor or manager must authorise."
         return f"Select {item_word} to remove."
+
+    def _confirm_btn_text(self) -> str:
+        if self.mode == "clear":
+            return "⊘  Authorise Clear Cart" if self.require_auth else "⊘  Clear Cart"
+        return "⊘  Authorise Remove" if self.require_auth else "⊘  Remove Selected"
 
     def _build_ui(self, title: str):
         lay = QVBoxLayout(self)
@@ -200,9 +208,7 @@ class VoidDialog(QDialog):
         """)
         cancel.clicked.connect(self.reject)
 
-        self.confirm_btn = QPushButton(
-            "⊘  Authorise Remove" if self.require_auth else "⊘  Remove Selected"
-        )
+        self.confirm_btn = QPushButton(self._confirm_btn_text())
         self.confirm_btn.setFixedHeight(40)
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.confirm_btn.setStyleSheet(f"""
@@ -241,6 +247,13 @@ class VoidDialog(QDialog):
         R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
 
+        # "clear" mode is all-or-nothing — hide the checkbox column
+        # entirely rather than showing disabled checkboxes, since there's
+        # nothing for the cashier to actually choose here. The checkboxes
+        # still exist internally (all forced checked) so _confirm()'s
+        # selection logic works unchanged for every mode.
+        self.item_table.setColumnHidden(0, self.mode == "clear")
+
         self.item_table.setRowCount(len(self.cart))
         for row, item in enumerate(self.cart):
             self.item_table.setRowHeight(row, 36)
@@ -250,7 +263,9 @@ class VoidDialog(QDialog):
             chk_l.setContentsMargins(4, 0, 4, 0)
             chk_l.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chk = QCheckBox()
-            chk.setChecked(row in self.pre_select)
+            chk.setChecked(True if self.mode == "clear" else row in self.pre_select)
+            if self.mode == "clear":
+                chk.setEnabled(False)
             chk.setStyleSheet(f"""
                 QCheckBox::indicator{{width:16px;height:16px;
                 border:1.5px solid {BORDER};border-radius:3px;background:{WHITE};}}
