@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QFrame, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QComboBox, QCheckBox, QAbstractItemView,
     QMessageBox, QScrollArea, QSplitter, QSpinBox, QDoubleSpinBox,
-    QListWidget, QListWidgetItem, QFormLayout,
+    QListWidget, QListWidgetItem, QFormLayout, QDialog,
 )
 from PyQt6.QtCore  import Qt, QEvent, pyqtSignal
 from PyQt6.QtGui   import QColor, QDoubleValidator
@@ -26,7 +26,8 @@ from ui.shared.theme import (
     RED, RED_LIGHT, GREEN, GREEN_LIGHT, BLUE,
     symbol_font,
 )
-from core.db_users    import add_user, update_user, delete_user, get_users, get_user_by_id
+from core.db_users    import get_users
+from ui.manager.user_dialog import UserDialog
 from core.db_config   import (
     get_business, update_business, get, set as cfg_set, set_many,
     gct_rate, get_pg_config, save_pg_config, get_quick_keys, save_quick_keys,
@@ -207,12 +208,12 @@ class ManagerWindow(SupervisorWindow):
 
     def _build_users_tab(self):
         w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
-        lay = QHBoxLayout(w); lay.setContentsMargins(8,8,8,8); lay.setSpacing(8)
+        lay = QVBoxLayout(w); lay.setContentsMargins(8,8,8,8); lay.setSpacing(8)
 
-        # Left: user list
-        left = QFrame()
-        left.setStyleSheet(f"background:{WHITE};border-radius:10px;border:1px solid {BORDER};")
-        ll = QVBoxLayout(left); ll.setContentsMargins(10,10,10,10); ll.setSpacing(8)
+        # User list
+        card = QFrame()
+        card.setStyleSheet(f"background:{WHITE};border-radius:10px;border:1px solid {BORDER};")
+        cl = QVBoxLayout(card); cl.setContentsMargins(10,10,10,10); cl.setSpacing(8)
 
         tb = QHBoxLayout(); tb.setSpacing(8)
         self.usr_search = QLineEdit()
@@ -227,11 +228,11 @@ class ManagerWindow(SupervisorWindow):
 
         add_btn = QPushButton("+ Add User"); add_btn.setFixedHeight(34)
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setStyleSheet(self._accent_btn()); add_btn.clicked.connect(self._usr_new_form)
+        add_btn.setStyleSheet(self._accent_btn()); add_btn.clicked.connect(self._usr_open_add)
 
         tb.addWidget(self.usr_search, stretch=1)
         tb.addWidget(self.usr_role_filter); tb.addWidget(add_btn)
-        ll.addLayout(tb)
+        cl.addLayout(tb)
 
         self.usr_table = QTableWidget(); self.usr_table.setColumnCount(5)
         self.usr_table.setHorizontalHeaderLabels(["Name","Username","Role","Status","Actions"])
@@ -244,69 +245,11 @@ class ManagerWindow(SupervisorWindow):
         self.usr_table.verticalHeader().setVisible(False)
         self.usr_table.setShowGrid(False)
         self.usr_table.setStyleSheet(self._table_style())
-        self.usr_table.selectionModel().selectionChanged.connect(self._usr_on_row_selected)
-        ll.addWidget(self.usr_table, stretch=1)
+        self.usr_table.cellDoubleClicked.connect(self._usr_on_row_double_clicked)
+        cl.addWidget(self.usr_table, stretch=1)
 
-        # Right: user form
-        right = QFrame(); right.setFixedWidth(280)
-        right.setStyleSheet(f"background:{WHITE};border-radius:10px;border:1px solid {BORDER};")
-        rl = QVBoxLayout(right); rl.setContentsMargins(16,16,16,16); rl.setSpacing(10)
-
-        self.usr_form_title = QLabel("Add User")
-        self.usr_form_title.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:700;")
-        rl.addWidget(self.usr_form_title)
-
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;"); rl.addWidget(sep)
-
-        form = QFormLayout(); form.setSpacing(10)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self.usr_f_fullname = self.make_upper_input("Full name"); self.usr_f_fullname.setStyleSheet(self._input_style())
-        self.usr_f_username = self.make_upper_input("Login username"); self.usr_f_username.setStyleSheet(self._input_style())
-        self.usr_f_password = QLineEdit(); self.usr_f_password.setFixedHeight(34)
-        self.usr_f_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.usr_f_password.setPlaceholderText("Password (leave blank to keep)")
-        self.usr_f_password.setStyleSheet(self._input_style())
-        # Force password to uppercase as typed
-        self.usr_f_password.textChanged.connect(
-            lambda t: self.usr_f_password.setText(t.upper()) if t != t.upper() else None
-        )
-        self.usr_f_role = QComboBox(); self.usr_f_role.setFixedHeight(34)
-        self.usr_f_role.addItems(["cashier","supervisor","manager"])
-        self.usr_f_role.setStyleSheet(self._combo_style())
-        self.usr_f_active = QCheckBox("Active"); self.usr_f_active.setChecked(True)
-        self.usr_f_active.setStyleSheet(f"color:{DARK_CARD};font-size:12px;")
-
-        for lbl_txt, widget in [("Full Name", self.usr_f_fullname),("Username", self.usr_f_username),
-                                  ("Password", self.usr_f_password),("Role", self.usr_f_role),("", self.usr_f_active)]:
-            lbl = QLabel(lbl_txt); lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;")
-            form.addRow(lbl, widget)
-        rl.addLayout(form)
-        rl.addStretch()
-
-        self.usr_feedback = QLabel("")
-        self.usr_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
-        self.usr_feedback.setWordWrap(True); self.usr_feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rl.addWidget(self.usr_feedback)
-
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-        self.usr_save_btn = QPushButton("💾  Save"); self.usr_save_btn.setFixedHeight(34)
-        self.usr_save_btn.setStyleSheet(self._accent_btn()); self.usr_save_btn.clicked.connect(self._usr_save)
-        self.usr_delete_btn = QPushButton("🗑  Delete"); self.usr_delete_btn.setFixedHeight(34)
-        self.usr_delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.usr_delete_btn.setStyleSheet(f"QPushButton{{background:{RED_LIGHT};color:{RED};border:none;border-radius:17px;font-size:12px;font-weight:600;padding:0 12px;}}QPushButton:hover{{background:{RED};color:white;}}QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}")
-        self.usr_delete_btn.setEnabled(False); self.usr_delete_btn.clicked.connect(self._usr_delete)
-        self.usr_clear_btn = QPushButton("Clear"); self.usr_clear_btn.setFixedHeight(34)
-        self.usr_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.usr_clear_btn.setStyleSheet(f"QPushButton{{background:{WARM_WHITE};color:{LABEL_TEXT};border:1px solid {BORDER};border-radius:17px;font-size:12px;}}QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}")
-        self.usr_clear_btn.clicked.connect(self._usr_new_form)
-        btn_row.addWidget(self.usr_save_btn, stretch=1)
-        btn_row.addWidget(self.usr_delete_btn); btn_row.addWidget(self.usr_clear_btn)
-        rl.addLayout(btn_row)
-
-        lay.addWidget(left, stretch=1); lay.addWidget(right)
-        self._usr_editing_id = None; self._usr_all_users = []
+        lay.addWidget(card, stretch=1)
+        self._usr_all_users = []
         self._usr_load(); return w
 
     def _usr_load(self):
@@ -330,7 +273,7 @@ class ManagerWindow(SupervisorWindow):
             edit = QPushButton("Edit"); edit.setFixedHeight(26)
             edit.setCursor(Qt.CursorShape.PointingHandCursor)
             edit.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER};border:1px solid {AMBER};border-radius:5px;font-size:11px;}}QPushButton:hover{{background:{AMBER};color:white;}}")
-            edit.clicked.connect(lambda _, uid=u["id"]: self._usr_load_form(uid))
+            edit.clicked.connect(lambda _, uid=u["id"]: self._usr_open_edit(uid))
             cell = QWidget(); cl = QHBoxLayout(cell); cl.setContentsMargins(4,2,4,2); cl.addWidget(edit)
             for col, item in enumerate([name,user,role,stat]):
                 self.usr_table.setItem(row, col, item)
@@ -344,72 +287,22 @@ class ManagerWindow(SupervisorWindow):
              and (role == "all roles" or u["role"] == role)]
         self._usr_populate(f)
 
-    def _usr_on_row_selected(self):
-        row = self.usr_table.currentRow(); item = self.usr_table.item(row, 0)
-        if item: self._usr_load_form(item.data(Qt.ItemDataRole.UserRole))
+    def _usr_on_row_double_clicked(self, row, _col):
+        item = self.usr_table.item(row, 0)
+        if item: self._usr_open_edit(item.data(Qt.ItemDataRole.UserRole))
 
-    def _usr_load_form(self, uid):
+    def _usr_open_add(self):
+        dlg = UserDialog(self, current_user_id=self.user["id"])
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._usr_load()
+
+    def _usr_open_edit(self, uid):
         u = next((u for u in self._usr_all_users if u["id"]==uid), None)
         if not u: return
-        self._usr_editing_id = uid
-        self.usr_form_title.setText(f"Edit: {u['full_name']}")
-        self.usr_f_fullname.setText(u["full_name"]); self.usr_f_username.setText(u["username"])
-        self.usr_f_password.clear()
-        idx = self.usr_f_role.findText(u["role"])
-        if idx >= 0: self.usr_f_role.setCurrentIndex(idx)
-        self.usr_f_active.setChecked(bool(u["is_active"]))
-        self.usr_delete_btn.setEnabled(uid != self.user["id"])
-        self.usr_feedback.setText("")
-
-    def _usr_new_form(self):
-        self._usr_editing_id = None
-        self.usr_form_title.setText("Add User")
-        for inp in [self.usr_f_fullname, self.usr_f_username, self.usr_f_password]: inp.clear()
-        self.usr_f_role.setCurrentIndex(0); self.usr_f_active.setChecked(True)
-        self.usr_delete_btn.setEnabled(False); self.usr_feedback.setText("")
+        dlg = UserDialog(self, current_user_id=self.user["id"], editing=u)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._usr_load()
         self.usr_table.clearSelection()
-
-    def _usr_save(self):
-        full_name = self.usr_f_fullname.text().strip()
-        username  = self.usr_f_username.text().strip()
-        password  = self.usr_f_password.text()
-        role      = self.usr_f_role.currentText()
-        is_active = self.usr_f_active.isChecked()
-        if not full_name or not username:
-            self._usr_err("Full name and username are required."); return
-        if self._usr_editing_id is None and not password:
-            self._usr_err("Password required for new user."); return
-        try:
-            if self._usr_editing_id is None:
-                add_user(full_name, username, password, role, is_active)
-                self._usr_ok(f"User '{full_name}' created.")
-            else:
-                update_user(self._usr_editing_id, full_name=full_name, username=username,
-                            password=password or None, role=role, is_active=is_active)
-                self._usr_ok(f"User '{full_name}' updated.")
-            self._usr_load(); self._usr_new_form()
-        except Exception as e:
-            self._usr_err(str(e))
-
-    def _usr_delete(self):
-        if not self._usr_editing_id or self._usr_editing_id == self.user["id"]: return
-        u = next((u for u in self._usr_all_users if u["id"]==self._usr_editing_id), None)
-        name = u["full_name"] if u else f"#{self._usr_editing_id}"
-        reply = QMessageBox.question(self, "Delete User", f"Delete '{name}'?\n\nTransaction history will not be affected.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes: return
-        try:
-            delete_user(self._usr_editing_id); self._usr_load(); self._usr_new_form()
-        except Exception as e:
-            QMessageBox.critical(self, "Delete Failed", str(e))
-
-    def _usr_ok(self, msg):
-        self.usr_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
-        self.usr_feedback.setText(msg)
-
-    def _usr_err(self, msg):
-        self.usr_feedback.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
-        self.usr_feedback.setText(msg)
 
     # ================================================================
     # BUSINESS TAB
