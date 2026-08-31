@@ -256,19 +256,25 @@ class SupervisorWindow(BaseWindow):
             edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             edit_btn.setStyleSheet(
                 f"QPushButton{{background:transparent;color:{READABLE_AMBER};border:1px solid {READABLE_AMBER};"
-                f"border-radius:5px;font-size:12px;font-weight:600;padding:0 8px;}}"
+                f"border-radius:5px;font-size:12px;font-weight:600;padding:0 8px;outline:none;}}"
                 f"QPushButton:hover{{background:{READABLE_AMBER};color:white;}}"
+                f"QPushButton:pressed{{background:#6E440D;color:white;}}"
             )
             edit_btn.clicked.connect(lambda _, pid=p["id"]: self._edit_product(pid))
             al.addWidget(edit_btn)
             del_btn = QPushButton(); del_btn.setFixedSize(28, 26)
             from PyQt6.QtCore import QSize as _QSize
+            # Icon is baked to a fixed RED pixmap, so a hover fill of solid
+            # RED would make the (also-red) X invisible against its own
+            # background. RED_LIGHT keeps the icon legible on hover instead
+            # of trying to invert a pre-rendered icon's color via QSS.
             del_btn.setIcon(self._draw_product_icon("clear", RED)); del_btn.setIconSize(_QSize(11, 11))
             del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             del_btn.setToolTip("Delete product")
             del_btn.setStyleSheet(
-                f"QPushButton{{background:transparent;border:1px solid {RED};border-radius:5px;}}"
-                f"QPushButton:hover{{background:{RED};}}"
+                f"QPushButton{{background:transparent;border:1px solid {RED};border-radius:5px;outline:none;}}"
+                f"QPushButton:hover{{background:{RED_LIGHT};border-color:{RED};}}"
+                f"QPushButton:pressed{{background:#F0C9C9;}}"
             )
             del_btn.clicked.connect(lambda _, pid=p["id"]: self._delete_product(pid))
             al.addWidget(del_btn)
@@ -1264,18 +1270,22 @@ class SupervisorWindow(BaseWindow):
         b = AMBER if accent else BORDER
         return (
             f"QLineEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {b};"
-            f"border-radius:7px;padding:0 10px;font-size:12px;font-weight:400;}}"
+            f"border-radius:7px;padding:0 10px;font-size:12px;font-weight:400;outline:none;}}"
+            f"QLineEdit:hover{{border-color:{AMBER_LIGHTEST if not accent else AMBER};}}"
             f"QLineEdit:focus{{border-color:{AMBER};background:#fffef9;}}"
             f"QLineEdit::placeholder{{color:{MUTED};}}"
+            f"QLineEdit:disabled{{background:{BORDER_LIGHT};color:{MUTED};}}"
             f"QSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {b};"
-            f"border-radius:7px;padding:0 8px;font-size:12px;}}"
+            f"border-radius:7px;padding:0 8px;font-size:12px;outline:none;}}"
+            f"QSpinBox:hover{{border-color:{AMBER_LIGHTEST};}}"
             f"QSpinBox:focus{{border-color:{AMBER};}}"
         )
 
     def _combo_style(self):
         return (
             f"QComboBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:12px;font-weight:400;}}"
+            f"border-radius:7px;padding:0 10px;font-size:12px;font-weight:400;outline:none;}}"
+            f"QComboBox:hover{{border-color:{AMBER_LIGHTEST};}}"
             f"QComboBox:focus{{border-color:{AMBER};}}"
             f"QComboBox::drop-down{{border:none;width:20px;}}"
             f"QComboBox::down-arrow{{width:10px;height:10px;}}"
@@ -1285,26 +1295,55 @@ class SupervisorWindow(BaseWindow):
         )
 
     def _accent_btn(self):
-        return f"QPushButton{{background:{AMBER};color:{DARK};border:none;border-radius:17px;font-size:12px;font-weight:700;padding:0 16px;}}QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+        return (
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;"
+            f"border-radius:17px;font-size:12px;font-weight:700;padding:0 16px;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:disabled{{background:{BORDER_LIGHT};color:{MUTED};}}"
+        )
 
     def _outline_btn(self, text):
         b = QPushButton(text); b.setFixedHeight(32); b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setStyleSheet(f"QPushButton{{background:transparent;color:{LABEL_TEXT};border:1.5px solid {BORDER};border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;}}QPushButton:hover{{background:{WARM_WHITE};color:{DARK_CARD};}}QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
+        b.setStyleSheet(
+            f"QPushButton{{background:transparent;color:{LABEL_TEXT};border:1.5px solid {BORDER};"
+            f"border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;outline:none;}}"
+            f"QPushButton:hover{{background:{WARM_WHITE};color:{DARK_CARD};border-color:{AMBER};}}"
+            f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
+            f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}"
+        )
         return b
 
     def _danger_btn(self, text):
         b = QPushButton(text); b.setFixedHeight(32); b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setStyleSheet(f"QPushButton{{background:{RED_LIGHT};color:{RED};border:none;border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;}}QPushButton:hover{{background:{RED};color:white;}}QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}")
+        b.setStyleSheet(
+            f"QPushButton{{background:{RED_LIGHT};color:{RED};border:none;"
+            f"border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;outline:none;}}"
+            f"QPushButton:hover{{background:{RED};color:white;}}"
+            f"QPushButton:pressed{{background:#7A1F1F;color:white;}}"
+            f"QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}"
+        )
         return b
 
     def _success_btn(self, text):
         b = QPushButton(text); b.setFixedHeight(32); b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setStyleSheet(f"QPushButton{{background:{GREEN_LIGHT};color:{GREEN};border:none;border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;}}QPushButton:hover{{background:{GREEN};color:white;}}QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}")
+        b.setStyleSheet(
+            f"QPushButton{{background:{GREEN_LIGHT};color:{GREEN};border:none;"
+            f"border-radius:16px;font-size:11px;font-weight:600;padding:0 14px;outline:none;}}"
+            f"QPushButton:hover{{background:{GREEN};color:white;}}"
+            f"QPushButton:pressed{{background:#134D28;color:white;}}"
+            f"QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}"
+        )
         return b
 
     def _icon_btn(self, icon, tooltip=""):
         b = QPushButton(icon); b.setFixedSize(34,34); b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setStyleSheet(f"QPushButton{{background:{WARM_WHITE};color:{DARK_CARD};border:1.5px solid {BORDER};border-radius:7px;font-size:14px;font-weight:700;}}QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}")
+        b.setStyleSheet(
+            f"QPushButton{{background:{WARM_WHITE};color:{DARK_CARD};border:1.5px solid {BORDER};"
+            f"border-radius:7px;font-size:14px;font-weight:700;outline:none;}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
+            f"QPushButton:pressed{{background:{AMBER_LIGHTEST};}}"
+        )
         return b
 
     def _draw_product_icon(self, kind: str, color: str, size: int = 19):
@@ -1336,8 +1375,9 @@ class SupervisorWindow(BaseWindow):
         b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setIcon(self._draw_product_icon(kind, DARK_CARD)); b.setIconSize(_QSize(16, 16))
         b.setStyleSheet(
-            f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};border-radius:7px;}}"
+            f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};border-radius:7px;outline:none;}}"
             f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
+            f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
         )
         return b
 
