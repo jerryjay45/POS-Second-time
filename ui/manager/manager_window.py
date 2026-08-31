@@ -33,6 +33,7 @@ from core.db_config   import (
     gct_rate, get_pg_config, save_pg_config, get_quick_keys, save_quick_keys,
 )
 from core.db_products import get_products, get_product_by_id, get_groups, add_group, delete_group, update_group_margin, recalculate_all_cases
+from ui.shared.checkbox import make_checkbox
 
 # AMBER (#EF9F27) used directly as text on white measured ~2.2:1 — same
 # failure pattern found and fixed throughout the cashier section. Scoped
@@ -370,17 +371,11 @@ class ManagerWindow(SupervisorWindow):
         lay.addWidget(self._section_lbl("Cashier Permissions"))
         perm_box = QFrame()
         perm_box.setStyleSheet(f"background:{WARM_WHITE};border:1px solid {BORDER};border-radius:8px;")
-        pb = QVBoxLayout(perm_box); pb.setContentsMargins(14,12,14,12); pb.setSpacing(6)
+        pb = QVBoxLayout(perm_box); pb.setContentsMargins(14,12,14,12); pb.setSpacing(10)
         def _perm_toggle(label, hint):
-            cb = QCheckBox(label)
-            cb.setStyleSheet(
-                f"QCheckBox{{color:{DARK_CARD};font-size:12px;font-weight:500;}}"
-                f"QCheckBox::indicator{{width:16px;height:16px;border:1px solid {BORDER};"
-                f"border-radius:3px;background:{WHITE};}}"
-                f"QCheckBox::indicator:checked{{background:{AMBER};border-color:{AMBER};}}"
-            )
+            cb = make_checkbox(label, size=17, font_size=12)
             hl = QLabel(hint); hl.setWordWrap(True)
-            hl.setStyleSheet(f"color:{MUTED};font-size:11px;margin-left:22px;")
+            hl.setStyleSheet(f"color:{MUTED};font-size:11px;margin-left:25px;")
             return cb, hl
 
         self.perm_require_remove_auth, ra_hint = _perm_toggle(
@@ -427,15 +422,17 @@ class ManagerWindow(SupervisorWindow):
         # Enable/disable threshold spinbox with the checkbox
         self.perm_low_stock.toggled.connect(self.perm_low_stock_threshold.setEnabled)
 
-        for widget in [
-            self.perm_require_remove_auth, ra_hint,
-            self.perm_session_gate,        sg_hint,
-            self.perm_cart_qty_edit,       cq_hint,
-            self.perm_low_stock,           ls_hint,
-            self.perm_stock_tracking,      st_hint,
-        ]:
-            pb.addWidget(widget)
+        def _perm_group(cb, hint_lbl):
+            g = QVBoxLayout(); g.setSpacing(3)
+            g.addWidget(cb); g.addWidget(hint_lbl)
+            return g
+
+        pb.addLayout(_perm_group(self.perm_require_remove_auth, ra_hint))
+        pb.addLayout(_perm_group(self.perm_session_gate, sg_hint))
+        pb.addLayout(_perm_group(self.perm_cart_qty_edit, cq_hint))
+        pb.addLayout(_perm_group(self.perm_low_stock, ls_hint))
         pb.addLayout(ls_row)
+        pb.addLayout(_perm_group(self.perm_stock_tracking, st_hint))
         lay.addWidget(perm_box)
 
         lay.addStretch()
@@ -473,10 +470,16 @@ class ManagerWindow(SupervisorWindow):
         self.new_group_inp.setPlaceholderText("New group name…")
         self.new_group_inp.setStyleSheet(self._input_style())
         add_grp = QPushButton("Add Group"); add_grp.setFixedHeight(32)
+        add_grp.setCursor(Qt.CursorShape.PointingHandCursor)
         add_grp.setStyleSheet(self._accent_btn()); add_grp.clicked.connect(self._add_group)
         del_grp = QPushButton("Delete Selected"); del_grp.setFixedHeight(32)
         del_grp.setCursor(Qt.CursorShape.PointingHandCursor)
-        del_grp.setStyleSheet(f"QPushButton{{background:{RED_LIGHT};color:{RED};border:none;border-radius:16px;font-size:11px;padding:0 12px;}}QPushButton:hover{{background:{RED};color:white;}}")
+        del_grp.setStyleSheet(
+            f"QPushButton{{background:{RED_LIGHT};color:{RED};border:none;"
+            f"border-radius:16px;font-size:11px;padding:0 12px;outline:none;}}"
+            f"QPushButton:hover{{background:{RED};color:white;}}"
+            f"QPushButton:pressed{{background:#7a1f1f;color:white;}}"
+        )
         del_grp.clicked.connect(self._delete_group)
         grp_row.addWidget(self.new_group_inp, stretch=1); grp_row.addWidget(add_grp); grp_row.addWidget(del_grp)
         lay.addLayout(grp_row)
@@ -509,10 +512,12 @@ class ManagerWindow(SupervisorWindow):
             self.case_profit_spin.setValue(10.0)
         recalc_btn = QPushButton("\u21bb  Recalculate All Cases Now")
         recalc_btn.setFixedHeight(34)
+        recalc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         recalc_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{AMBER_DARK};border:1px solid {AMBER};"
-            f"border-radius:17px;font-size:11px;padding:0 14px;}}"
+            f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1px solid {AMBER};"
+            f"border-radius:17px;font-size:11px;padding:0 14px;outline:none;}}"
             f"QPushButton:hover{{background:{AMBER_LIGHTEST};}}"
+            f"QPushButton:pressed{{background:{AMBER};color:{DARK};}}"
         )
         recalc_btn.clicked.connect(self._recalculate_cases_now)
         case_row.addWidget(self._flabel("Case Markup:")); case_row.addWidget(self.case_profit_spin)
@@ -626,7 +631,7 @@ class ManagerWindow(SupervisorWindow):
         refresh_receipt.setFont(symbol_font())
         refresh_receipt.setToolTip("Refresh printer list")
         refresh_receipt.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_receipt.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER};border:1.5px solid {AMBER};border-radius:17px;font-size:14px;font-weight:700;}}QPushButton:hover{{background:{AMBER};color:white;}}")
+        refresh_receipt.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:17px;font-size:14px;font-weight:700;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:white;}}")
         refresh_receipt.clicked.connect(lambda: self._printers_refresh_list(self.ps_receipt_combo))
 
         receipt_box = QFrame()
@@ -674,7 +679,7 @@ class ManagerWindow(SupervisorWindow):
         detect_btn = QPushButton("Auto-Detect")
         detect_btn.setFixedHeight(34)
         detect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        detect_btn.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER};border:1.5px solid {AMBER};border-radius:7px;padding:0 12px;font-size:12px;font-weight:600;}}QPushButton:hover{{background:{AMBER};color:white;}}")
+        detect_btn.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:7px;padding:0 12px;font-size:12px;font-weight:600;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:white;}}")
         detect_btn.clicked.connect(self._printers_detect_width)
 
         width_box = QFrame()
@@ -703,14 +708,8 @@ class ManagerWindow(SupervisorWindow):
         self.ps_copies.setStyleSheet(f"QSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};border-radius:7px;padding:0 10px;font-size:13px;}}QSpinBox:focus{{border-color:{AMBER};}}")
 
         # ── ESC/POS ───────────────────────────────────────────────────
-        self.ps_escpos = QCheckBox("Send real ESC/POS commands (bold headers/totals, real paper cut)")
-        self.ps_escpos.setStyleSheet(
-            f"QCheckBox{{color:{DARK_CARD};font-size:12px;font-weight:500;}}"
-            f"QCheckBox::indicator{{width:16px;height:16px;border:1px solid {BORDER};border-radius:3px;}}"
-            f"QCheckBox::indicator:checked{{background:{AMBER};border-color:{AMBER};}}"
-        )
-        self.ps_cash_drawer = QCheckBox("Open cash drawer on cash/split-tender sales")
-        self.ps_cash_drawer.setStyleSheet(self.ps_escpos.styleSheet())
+        self.ps_escpos = make_checkbox("Send real ESC/POS commands (bold headers/totals, real paper cut)")
+        self.ps_cash_drawer = make_checkbox("Open cash drawer on cash/split-tender sales")
 
         escpos_box = QFrame()
         escpos_box.setStyleSheet(f"background:{WARM_WHITE};border:1px solid {BORDER};border-radius:8px;")
@@ -759,10 +758,12 @@ class ManagerWindow(SupervisorWindow):
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(10)
         test_btn = QPushButton("🖨  Test Print"); test_btn.setFixedHeight(38)
+        test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         test_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{AMBER};border:1.5px solid {AMBER};"
-            f"border-radius:8px;font-size:13px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;}}"
+            f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};"
+            f"border-radius:8px;font-size:13px;font-weight:600;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:white;}}"
         )
         test_btn.clicked.connect(self._printers_test)
         save_btn = QPushButton("💾  Save Printer Settings"); save_btn.setFixedHeight(38)
@@ -925,8 +926,7 @@ class ManagerWindow(SupervisorWindow):
         )
         desc.setWordWrap(True); desc.setStyleSheet(f"color:{MUTED};font-size:11px;"); lay.addWidget(desc)
 
-        self.pg_enabled = QCheckBox("Enable PostgreSQL sync")
-        self.pg_enabled.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:500;")
+        self.pg_enabled = make_checkbox("Enable PostgreSQL sync", font_size=13)
         lay.addWidget(self.pg_enabled)
         lay.addWidget(self._hdiv())
 
@@ -1178,15 +1178,18 @@ class ManagerWindow(SupervisorWindow):
         b = AMBER if accent else BORDER
         return (
             f"QLineEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {b};"
-            f"border-radius:7px;padding:0 10px;font-size:12px;}}"
+            f"border-radius:7px;padding:0 10px;font-size:12px;outline:none;}}"
+            f"QLineEdit:hover{{border-color:{AMBER_LIGHTEST if not accent else AMBER};}}"
             f"QLineEdit:focus{{border-color:{AMBER};background:#fffef9;}}"
             f"QLineEdit::placeholder{{color:{MUTED};}}"
+            f"QLineEdit:disabled{{background:{BORDER_LIGHT};color:{MUTED};}}"
         )
 
     def _combo_style(self):
         return (
             f"QComboBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-            f"border-radius:7px;padding:0 10px;font-size:12px;}}"
+            f"border-radius:7px;padding:0 10px;font-size:12px;outline:none;}}"
+            f"QComboBox:hover{{border-color:{AMBER_LIGHTEST};}}"
             f"QComboBox:focus{{border-color:{AMBER};}}"
             f"QComboBox::drop-down{{border:none;width:20px;}}"
             f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
@@ -1195,7 +1198,13 @@ class ManagerWindow(SupervisorWindow):
         )
 
     def _accent_btn(self):
-        return f"QPushButton{{background:{AMBER};color:white;border:none;border-radius:17px;font-size:12px;font-weight:600;padding:0 16px;}}QPushButton:hover{{background:{AMBER_DARK};}}"
+        return (
+            f"QPushButton{{background:{AMBER};color:white;border:none;"
+            f"border-radius:17px;font-size:12px;font-weight:600;padding:0 16px;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};}}"
+            f"QPushButton:disabled{{background:{BORDER_LIGHT};color:{MUTED};}}"
+        )
 
     def _finp(self, placeholder, uppercase=True):
         if uppercase:
@@ -1205,7 +1214,7 @@ class ManagerWindow(SupervisorWindow):
         inp.setStyleSheet(self._input_style()); return inp
 
     def _flabel(self, text):
-        l = QLabel(text); l.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;"); return l
+        l = QLabel(text); l.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:600;"); return l
 
     def _section_lbl(self, text):
         l = QLabel(text.upper()); l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;"); return l
