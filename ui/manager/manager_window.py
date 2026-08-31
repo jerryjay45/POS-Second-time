@@ -1198,11 +1198,16 @@ class ManagerWindow(SupervisorWindow):
         )
 
     def _accent_btn(self):
+        # AMBER (#EF9F27) with white text measures ~2.2:1 — fails WCAG AA
+        # (needs 4.5:1). DARK text on AMBER measures ~9.6:1, and matches
+        # SupervisorWindow's own _accent_btn, which this was silently
+        # overriding with the low-contrast version for every manager-only
+        # Save button (Business Info, Printers, PostgreSQL, Groups).
         return (
-            f"QPushButton{{background:{AMBER};color:white;border:none;"
-            f"border-radius:17px;font-size:12px;font-weight:600;padding:0 16px;outline:none;}}"
-            f"QPushButton:hover{{background:{AMBER_DARK};}}"
-            f"QPushButton:pressed{{background:{AMBER_DARK};}}"
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;"
+            f"border-radius:17px;font-size:12px;font-weight:700;padding:0 16px;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
             f"QPushButton:disabled{{background:{BORDER_LIGHT};color:{MUTED};}}"
         )
 
