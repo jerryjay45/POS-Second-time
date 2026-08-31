@@ -38,6 +38,7 @@ from core.db_products import (
 )
 from core.db_config import get as cfg_get
 from config import DB_PRODUCTS
+from ui.shared.checkbox import make_checkbox
 
 
 class ProductDialog(QDialog):
@@ -1026,13 +1027,7 @@ class ProductDialog(QDialog):
         return l
 
     def _toggle(self, label, checked=False):
-        cb = QCheckBox(label); cb.setChecked(checked)
-        cb.setStyleSheet(
-            f"QCheckBox{{color:{DARK_CARD};font-size:12px;font-weight:500;}}"
-            f"QCheckBox::indicator{{width:16px;height:16px;border:1px solid {BORDER};"
-            f"border-radius:3px;background:{WHITE};}}"
-            f"QCheckBox::indicator:checked{{background:{AMBER};border-color:{AMBER};}}")
-        return cb
+        return make_checkbox(label, checked=checked, size=16, font_size=12)
 
     def _input_style(self, accent=False):
         b = AMBER if accent else BORDER
