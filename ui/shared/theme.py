@@ -201,6 +201,12 @@ def get_stylesheet() -> str:
     LT = _active.get("LABEL_TEXT",   "#888780")
     F  = _active.get("MAIN_FONT",    "Inter")
 
+    try:
+        from ui.shared.icons import checkmark_png
+        _checkmark_path = checkmark_png("#FFFFFF", size=17)
+    except Exception:
+        _checkmark_path = ""
+
     return f"""
 QWidget {{
     font-family: "{F}", "Segoe UI", sans-serif;
@@ -288,14 +294,18 @@ QTabBar::tab:selected {{ color: {DC}; border-bottom: 2px solid {A}; font-weight:
 QTabBar::tab:hover {{ color: {DC}; }}
 QTabWidget::pane {{ border: none; border-top: 1.5px solid {B}; }}
 
-QCheckBox {{ font-size: 13px; font-weight: 500; spacing: 8px; color: {DC}; }}
+QCheckBox {{ font-size: 13px; font-weight: 500; spacing: 8px; color: {DC}; outline: none; }}
 QCheckBox::indicator, QRadioButton::indicator {{
-    width: 16px; height: 16px;
-    border: 2px solid {B}; border-radius: 4px; background: {W};
+    width: 17px; height: 17px;
+    border: 1.5px solid {B}; border-radius: 4px; background: {W};
 }}
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {A}; }}
 QCheckBox::indicator:checked {{
-    background-color: {A}; border-color: {A};
+    background-color: {A}; border-color: {A}; image: url({_checkmark_path});
 }}
+QCheckBox::indicator:checked:hover {{ background-color: {AD}; border-color: {AD}; }}
+QCheckBox::indicator:disabled {{ background-color: {BL}; border-color: {BL}; }}
+QCheckBox:disabled {{ color: {M}; }}
 
 QSpinBox, QDoubleSpinBox {{
     background-color: {W}; border: 2px solid {B};
