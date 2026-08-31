@@ -50,7 +50,7 @@ class ProductDialog(QDialog):
         self.setModal(True)
         self.setMinimumSize(820, 560)
         self.setMaximumSize(980, 720)
-        self.resize(880, 680)
+        self.resize(900, 720)
         self.setSizeGripEnabled(True)
         self.setStyleSheet(f"background:{WHITE};")
         self._build_ui()
@@ -170,7 +170,12 @@ class ProductDialog(QDialog):
 
         left_col.addWidget(self._flabel("Selling Price"))
         self.f_price = QLineEdit(); self.f_price.setReadOnly(True); self.f_price.setFixedHeight(36)
-        self.f_price.setStyleSheet(f"QLineEdit{{background:#0d1a10;color:{GREEN};border:1px solid #1a3a20;border-radius:6px;padding:0 10px;font-size:14px;font-weight:700;}}")
+        self.f_price.setPlaceholderText("Enter a cost above to calculate")
+        self.f_price.setStyleSheet(
+            f"QLineEdit{{background:#0d1a10;color:{GREEN};border:1px solid #1a3a20;"
+            f"border-radius:6px;padding:0 10px;font-size:14px;font-weight:700;}}"
+            f"QLineEdit::placeholder{{color:#5c7a68;font-weight:500;}}"
+        )
         self.f_price_hint = QLabel(""); self.f_price_hint.setStyleSheet(f"color:{MUTED};font-size:10px;")
         left_col.addWidget(self.f_price); left_col.addWidget(self.f_price_hint)
 
@@ -342,9 +347,9 @@ class ProductDialog(QDialog):
         new_grp_btn.setToolTip("Create a new variant group")
         new_grp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_grp_btn.setStyleSheet(
-            f"QPushButton{{background:{AMBER};color:white;border:none;"
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;"
             f"border-radius:6px;font-size:16px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER_DARK};}}")
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}")
         new_grp_btn.clicked.connect(self._create_variant_group_inline)
         m2_grp_row.addWidget(new_grp_btn)
         m2_left.addLayout(m2_grp_row)
@@ -1054,7 +1059,7 @@ class ProductDialog(QDialog):
         )
 
     def _accent_btn(self):
-        return f"QPushButton{{background:{AMBER};color:white;border:none;border-radius:20px;font-size:13px;font-weight:700;padding:0 20px;}}QPushButton:hover{{background:{AMBER_DARK};}}"
+        return f"QPushButton{{background:{AMBER};color:{DARK};border:none;border-radius:20px;font-size:13px;font-weight:700;padding:0 20px;}}QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
 
     def _draw_x_icon(self, color: str, size: int = 18) -> QIcon:
         """Hand-painted close icon — no text glyph / font dependency (see
