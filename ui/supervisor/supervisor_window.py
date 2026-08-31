@@ -20,7 +20,6 @@ from ui.shared.theme import (
     DARK, DARK_2, DARK_4, DARK_CARD,
     WARM_WHITE, WHITE, BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN, GREEN_LIGHT, BLUE,
-    symbol_font,
 )
 from core.db_products import (
     get_products, get_product_by_id, delete_product,
@@ -144,15 +143,9 @@ class SupervisorWindow(BaseWindow):
         refresh_btn.setFixedHeight(36)
         refresh_btn.clicked.connect(lambda: (setattr(self, '_pg_page', 0), self._load_products(self.product_search.text())))
 
-        recalc_btn = QPushButton("⟳ Recalc Cases")
+        recalc_btn = self._outline_btn("⟳ Recalc Cases")
         recalc_btn.setFixedHeight(36)
-        recalc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         recalc_btn.setToolTip("Recalculate all case product prices from their linked single products")
-        recalc_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{AMBER_DARK};border:1.5px solid {AMBER};"
-            f"border-radius:7px;font-size:12px;font-weight:600;padding:0 12px;}}"
-            f"QPushButton:hover{{background:{AMBER_LIGHTEST};}}"
-        )
         recalc_btn.clicked.connect(self._recalculate_cases)
 
         add_btn = QPushButton("＋  Add Product"); add_btn.setFixedHeight(36)
@@ -243,32 +236,42 @@ class SupervisorWindow(BaseWindow):
                 c = QTableWidgetItem(str(t)); c.setForeground(QColor(color))
                 if align: c.setTextAlignment(align)
                 return c
+            # AMBER_DARK (#BA7517) is only 3.72:1 against white — under the
+            # 4.5:1 WCAG AA minimum for 12px text. This darker shade holds
+            # the same amber hue at ~5.4:1, for small amber text/borders only.
+            READABLE_AMBER = "#955E12"
             tags = []
             if p["gct_applicable"]: tags.append("GCT")
             if p["is_case"]:        tags.append("CASE")
             tags_str   = "  ·  ".join(tags) if tags else "—"
-            tags_color = AMBER_DARK if tags else MUTED
+            tags_color = READABLE_AMBER if tags else MUTED
             self.product_table.setItem(row, 0, cell(p["name"]))
             self.product_table.setItem(row, 1, cell(p["barcode"], MUTED))
-            self.product_table.setItem(row, 2, cell(f"{format_currency(p['effective_cost'])}", AMBER_DARK, R))
+            self.product_table.setItem(row, 2, cell(f"{format_currency(p['effective_cost'])}", READABLE_AMBER, R))
             self.product_table.setItem(row, 3, cell(f"{format_currency(p['effective_selling_price'])}", GREEN, R))
             self.product_table.setItem(row, 4, cell(tags_str, tags_color, C))
             act = QWidget(); al = QHBoxLayout(act)
             al.setContentsMargins(4, 2, 4, 2); al.setSpacing(4)
-            for label, color, cb in [
-                ("Edit", AMBER, lambda _, pid=p["id"]: self._edit_product(pid)),
-                ("✕",    RED,   lambda _, pid=p["id"]: self._delete_product(pid)),
-            ]:
-                b = QPushButton(label); b.setFixedHeight(26)
-                if label == "✕":
-                    b.setFont(symbol_font(point_size=12))
-                b.setCursor(Qt.CursorShape.PointingHandCursor)
-                b.setStyleSheet(
-                    f"QPushButton{{background:transparent;color:{color};border:1px solid {color};"
-                    f"border-radius:5px;font-size:12px;font-weight:600;padding:0 8px;}}"
-                    f"QPushButton:hover{{background:{color};color:white;}}"
-                )
-                b.clicked.connect(cb); al.addWidget(b)
+            edit_btn = QPushButton("Edit"); edit_btn.setFixedHeight(26)
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            edit_btn.setStyleSheet(
+                f"QPushButton{{background:transparent;color:{READABLE_AMBER};border:1px solid {READABLE_AMBER};"
+                f"border-radius:5px;font-size:12px;font-weight:600;padding:0 8px;}}"
+                f"QPushButton:hover{{background:{READABLE_AMBER};color:white;}}"
+            )
+            edit_btn.clicked.connect(lambda _, pid=p["id"]: self._edit_product(pid))
+            al.addWidget(edit_btn)
+            del_btn = QPushButton(); del_btn.setFixedSize(28, 26)
+            from PyQt6.QtCore import QSize as _QSize
+            del_btn.setIcon(self._draw_product_icon("clear", RED)); del_btn.setIconSize(_QSize(11, 11))
+            del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            del_btn.setToolTip("Delete product")
+            del_btn.setStyleSheet(
+                f"QPushButton{{background:transparent;border:1px solid {RED};border-radius:5px;}}"
+                f"QPushButton:hover{{background:{RED};}}"
+            )
+            del_btn.clicked.connect(lambda _, pid=p["id"]: self._delete_product(pid))
+            al.addWidget(del_btn)
             al.addStretch()
             self.product_table.setCellWidget(row, 5, act)
 
@@ -1249,6 +1252,7 @@ class SupervisorWindow(BaseWindow):
         return f"""
             QTableWidget{{background:{WHITE};border:none;font-size:12px;color:{DARK_CARD};}}
             QTableWidget::item{{padding:6px 8px;border-bottom:1px solid {BORDER_LIGHT};}}
+            QTableWidget::item:hover{{background:{AMBER_LIGHTEST};}}
             QTableWidget::item:selected{{background:{AMBER_BG};color:{DARK_CARD};}}
             QHeaderView::section{{background:{DARK};color:{AMBER};font-size:11px;
             font-weight:700;padding:6px 8px;border:none;border-right:1px solid {DARK_4};}}
@@ -1281,7 +1285,7 @@ class SupervisorWindow(BaseWindow):
         )
 
     def _accent_btn(self):
-        return f"QPushButton{{background:{AMBER};color:white;border:none;border-radius:17px;font-size:12px;font-weight:600;padding:0 16px;}}QPushButton:hover{{background:{AMBER_DARK};}}"
+        return f"QPushButton{{background:{AMBER};color:{DARK};border:none;border-radius:17px;font-size:12px;font-weight:700;padding:0 16px;}}QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
 
     def _outline_btn(self, text):
         b = QPushButton(text); b.setFixedHeight(32); b.setCursor(Qt.CursorShape.PointingHandCursor)
