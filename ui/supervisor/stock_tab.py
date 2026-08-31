@@ -12,8 +12,8 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QIcon, QPixmap
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_BG, AMBER_LIGHTEST,
-    DARK_CARD, WHITE, WARM_WHITE, BORDER, BORDER_LIGHT,
-    MUTED, LABEL_TEXT, RED, GREEN, BLUE,
+    DARK, DARK_CARD, WHITE, WARM_WHITE, BORDER, BORDER_LIGHT,
+    MUTED, LABEL_TEXT, RED, RED_LIGHT, GREEN, GREEN_LIGHT, BLUE,
 )
 from core.db_products import (
     get_products, count_products, adjust_stock,
@@ -27,8 +27,17 @@ from core.db_users import get_user_by_id
 
 def _stock_color(stock: int, threshold: int) -> str:
     if stock == 0:         return RED
-    if stock <= threshold: return AMBER_DARK
+    if stock <= threshold: return AMBER_TEXT_ON_LIGHT
     return GREEN
+
+
+# AMBER (#EF9F27) and AMBER_DARK (#BA7517), used directly as TEXT color
+# rather than a background, measured well under the 4.5:1 WCAG floor
+# against both white and AMBER_BG — same failure pattern found and fixed
+# throughout the cashier section. Scoped locally rather than changing the
+# shared constants, which are used correctly elsewhere in this file as
+# backgrounds/borders.
+AMBER_TEXT_ON_LIGHT = "#8a5510"
 
 
 # ── Hand-painted icons ───────────────────────────────────────────────────────
@@ -57,6 +66,11 @@ def _draw_icon(kind: str, color: str, size: int = 19) -> QIcon:
         p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
         p.drawLine(int(cx), int(cy), int(cx), int(cy - r * 0.55))
         p.drawLine(int(cx), int(cy), int(cx + r * 0.45), int(cy + r * 0.1))
+    elif kind == "plus":
+        p.drawLine(int(s / 2), int(m), int(s / 2), int(s - m))
+        p.drawLine(int(m), int(s / 2), int(s - m), int(s / 2))
+    elif kind == "minus":
+        p.drawLine(int(m), int(s / 2), int(s - m), int(s / 2))
     p.end()
     pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation)
@@ -73,6 +87,24 @@ def _icon_btn(kind: str, tooltip: str = "") -> QPushButton:
         f"border-radius:7px;outline:none;}}"
         f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
         f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
+    )
+    return b
+
+
+def _compact_icon_btn(kind: str, color: str, tint: str, tooltip: str = "") -> QPushButton:
+    """Small (28px) colored icon-only button — used where a text button
+    ("+ Add" / "− Remove") wouldn't fit a narrow table cell alongside a
+    spinbox. The icon color itself stays fixed (Qt can't restyle a
+    QIcon's pixmap per widget-state via stylesheet alone); only the
+    background/border shift on hover, matching _icon_btn's approach."""
+    b = QPushButton(); b.setFixedSize(28, 28)
+    b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setIcon(_draw_icon(kind, color)); b.setIconSize(QSize(14, 14))
+    b.setStyleSheet(
+        f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {color};"
+        f"border-radius:6px;outline:none;}}"
+        f"QPushButton:hover{{background:{tint};}}"
+        f"QPushButton:pressed{{background:{color};}}"
     )
     return b
 
@@ -126,7 +158,7 @@ def _neutral_btn(text: str, height: int = 36) -> QPushButton:
         f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
         f"border:1.5px solid {BORDER};border-radius:7px;"
         f"font-size:12px;font-weight:600;padding:0 12px;outline:none;}}"
-        f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};background:{AMBER_LIGHTEST};}}"
+        f"QPushButton:hover{{border-color:{AMBER};color:{AMBER_TEXT_ON_LIGHT};background:{AMBER_LIGHTEST};}}"
         f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
         f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};background:transparent;}}"
     )
@@ -333,7 +365,7 @@ class StockAdjustDialog(QDialog):
         adjust_stock(self.product_id, -qty, reason, self.user["id"])
         self.changed = True
         self._refresh_stock_label()
-        self.feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:12px;font-weight:600;")
+        self.feedback.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;")
         self.feedback.setText(f"✓  Removed {qty} unit{'s' if qty != 1 else ''}")
 
     def _show_history(self):
@@ -380,17 +412,17 @@ class StockTab(QWidget):
         af = QHBoxLayout(self.alert_frame)
         af.setContentsMargins(12, 6, 12, 6); af.setSpacing(8)
         alert_icon = QLabel("⚠")
-        alert_icon.setStyleSheet(f"color:{AMBER_DARK};font-size:14px;font-weight:700;background:transparent;")
+        alert_icon.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:14px;font-weight:700;background:transparent;")
         self.alert_lbl = QLabel("")
-        self.alert_lbl.setStyleSheet(f"color:{AMBER_DARK};font-size:12px;font-weight:600;background:transparent;")
+        self.alert_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;background:transparent;")
         self.alert_lbl.setWordWrap(True)
         dismiss_btn = QPushButton("Dismiss"); dismiss_btn.setFixedHeight(26)
         dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{AMBER_DARK};"
+            f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_LIGHT};"
             f"border:1px solid {AMBER};border-radius:5px;font-size:11px;"
             f"font-weight:600;padding:0 10px;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;}}"
+            f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
         )
         dismiss_btn.clicked.connect(lambda: self.alert_frame.setVisible(False))
         af.addWidget(alert_icon); af.addWidget(self.alert_lbl, stretch=1); af.addWidget(dismiss_btn)
@@ -442,7 +474,12 @@ class StockTab(QWidget):
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.stock_table.setColumnWidth(2, 70)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.stock_table.setColumnWidth(3, 150)
+        # Was 150px — "Adjust" + "History" side by side measured a ~140px
+        # bare minimum (font metrics: "Adjust" ~61px, "History" ~67px,
+        # plus spacing/margins), leaving almost no slack and causing
+        # visible truncation. 170px gives real breathing room without
+        # excess dead space (190 left a visibly large empty gap).
+        self.stock_table.setColumnWidth(3, 170)
         self.stock_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.stock_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.stock_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -483,9 +520,9 @@ class StockTab(QWidget):
         self.pool_refresh_btn.setFixedHeight(26)
         self.pool_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pool_refresh_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{AMBER};border:1px solid {AMBER};"
+            f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_LIGHT};border:1px solid {AMBER};"
             f"border-radius:5px;font-size:11px;font-weight:600;padding:0 10px;}}"
-            f"QPushButton:hover{{background:{AMBER};color:white;}}"
+            f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
         )
         self.pool_refresh_btn.clicked.connect(self._load_pool_table)
         pool_hdr.addWidget(self.pool_refresh_btn)
@@ -522,8 +559,12 @@ class StockTab(QWidget):
         ph.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         ph.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.pool_table.setColumnWidth(2, 140)
-        self.pool_table.setColumnWidth(3, 140)
+        # Column widths sized to whichever is larger: the compact
+        # spinbox+icon-button content (~92px) or the header label itself
+        # ("Remove Stock" alone measures ~86px of text) — my first pass
+        # sized purely for content and clipped the "Remove Stock" header.
+        self.pool_table.setColumnWidth(2, 110)
+        self.pool_table.setColumnWidth(3, 130)
         self.pool_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pool_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.pool_table.verticalHeader().setVisible(False)
@@ -594,33 +635,30 @@ class StockTab(QWidget):
             self.pool_table.setItem(row, 0, name_item)
 
             stock = g.get("stock", 0)
-            color = RED if stock == 0 else (AMBER_DARK if stock <= self._threshold else GREEN)
+            color = RED if stock == 0 else (AMBER_TEXT_ON_LIGHT if stock <= self._threshold else GREEN)
             label = "Out" if stock == 0 else (f"{stock} ⚠" if stock <= self._threshold else str(stock))
             si = QTableWidgetItem(label)
             si.setForeground(QColor(color)); si.setTextAlignment(C)
             f = QFont(); f.setBold(True); si.setFont(f)
             self.pool_table.setItem(row, 1, si)
 
-            # Add Stock widget
+            # Add Stock widget — spinbox + compact colored icon button.
+            # The old "+ Add"/"− Remove" text buttons needed ~87px min for
+            # "Remove" alone (measured), which didn't fit the 140px column
+            # alongside a spinbox — that's what was actually causing the
+            # truncation. Icon-only buttons are unambiguous here (a
+            # universal +/− paired with the row's own group name) and take
+            # a fraction of the width, freeing real room for Group Name.
             add_w = QWidget(); add_l = QHBoxLayout(add_w)
             add_l.setContentsMargins(4, 2, 4, 2); add_l.setSpacing(4)
             add_spin = QSpinBox(); add_spin.setMinimum(1); add_spin.setMaximum(9999)
-            add_spin.setValue(1); add_spin.setFixedHeight(28)
+            add_spin.setValue(1); add_spin.setFixedHeight(28); add_spin.setFixedWidth(52)
             add_spin.setStyleSheet(
                 f"QSpinBox{{background:{WHITE};border:1px solid {BORDER};"
                 f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};outline:none;}}"
                 f"QSpinBox:focus{{border-color:{AMBER};}}"
             )
-            add_btn = QPushButton("＋ Add")
-            add_btn.setFixedHeight(28)
-            add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            add_btn.setStyleSheet(
-                f"QPushButton{{background:transparent;color:{GREEN};"
-                f"border:1px solid {GREEN};border-radius:5px;"
-                f"font-size:11px;font-weight:700;padding:0 6px;outline:none;}}"
-                f"QPushButton:hover{{background:{GREEN};color:white;}}"
-                f"QPushButton:pressed{{background:{GREEN};color:white;border-color:{DARK_CARD};}}"
-            )
+            add_btn = _compact_icon_btn("plus", GREEN, GREEN_LIGHT, "Add stock")
             gid = g["id"]
             uid = self.user["id"]
             add_btn.clicked.connect(
@@ -629,26 +667,17 @@ class StockTab(QWidget):
             add_l.addWidget(add_spin); add_l.addWidget(add_btn)
             self.pool_table.setCellWidget(row, 2, add_w)
 
-            # Remove Stock widget
+            # Remove Stock widget — same compact treatment.
             rem_w = QWidget(); rem_l = QHBoxLayout(rem_w)
             rem_l.setContentsMargins(4, 2, 4, 2); rem_l.setSpacing(4)
             rem_spin = QSpinBox(); rem_spin.setMinimum(1); rem_spin.setMaximum(9999)
-            rem_spin.setValue(1); rem_spin.setFixedHeight(28)
+            rem_spin.setValue(1); rem_spin.setFixedHeight(28); rem_spin.setFixedWidth(52)
             rem_spin.setStyleSheet(
                 f"QSpinBox{{background:{WHITE};border:1px solid {BORDER};"
                 f"border-radius:5px;padding:0 4px;font-size:11px;color:{DARK_CARD};outline:none;}}"
                 f"QSpinBox:focus{{border-color:{AMBER};}}"
             )
-            rem_btn = QPushButton("− Remove")
-            rem_btn.setFixedHeight(28)
-            rem_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            rem_btn.setStyleSheet(
-                f"QPushButton{{background:transparent;color:{RED};"
-                f"border:1px solid {RED};border-radius:5px;"
-                f"font-size:11px;font-weight:700;padding:0 6px;outline:none;}}"
-                f"QPushButton:hover{{background:{RED};color:white;}}"
-                f"QPushButton:pressed{{background:{RED};color:white;border-color:{DARK_CARD};}}"
-            )
+            rem_btn = _compact_icon_btn("minus", RED, RED_LIGHT, "Remove stock")
             rem_btn.clicked.connect(
                 lambda _, gid=gid, sp=rem_spin: self._pool_adjust(gid, -sp.value(), uid)
             )
@@ -716,18 +745,24 @@ class StockTab(QWidget):
             # Action buttons — Adjust + History
             act = QWidget(); al = QHBoxLayout(act)
             al.setContentsMargins(4, 2, 4, 2); al.setSpacing(4)
-            for label, color, cb in [
-                ("Adjust",  AMBER, lambda _, pid=p["id"], pname=p["name"]: self._open_adjust_dialog(pid, pname)),
-                ("History", BLUE,  lambda _, pid=p["id"], pname=p["name"]: self._open_history(pid, pname)),
+            for label, color, text_color, hover_text, cb in [
+                ("Adjust",  AMBER, AMBER_TEXT_ON_LIGHT, DARK,
+                 lambda _, pid=p["id"], pname=p["name"]: self._open_adjust_dialog(pid, pname)),
+                ("History", BLUE,  BLUE, "white",
+                 lambda _, pid=p["id"], pname=p["name"]: self._open_history(pid, pname)),
             ]:
                 b = QPushButton(label); b.setFixedHeight(26)
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
+                # text_color/hover_text differ per button: AMBER as a
+                # background (border/hover fill) is fine, but AMBER as
+                # TEXT on white measured ~2.2:1 — same failure pattern
+                # found throughout the app. BLUE already passes both ways.
                 b.setStyleSheet(
-                    f"QPushButton{{background:transparent;color:{color};"
+                    f"QPushButton{{background:transparent;color:{text_color};"
                     f"border:1px solid {color};border-radius:5px;"
                     f"font-size:11px;font-weight:600;padding:0 8px;outline:none;}}"
-                    f"QPushButton:hover{{background:{color};color:white;}}"
-                    f"QPushButton:pressed{{background:{color};color:white;border-color:{DARK_CARD};}}"
+                    f"QPushButton:hover{{background:{color};color:{hover_text};}}"
+                    f"QPushButton:pressed{{background:{color};color:{hover_text};border-color:{DARK_CARD};}}"
                 )
                 b.clicked.connect(cb); al.addWidget(b)
             al.addStretch()
