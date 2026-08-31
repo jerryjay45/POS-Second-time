@@ -19,7 +19,7 @@ import sqlite3
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QComboBox, QCheckBox, QFrame, QWidget, QMessageBox,
-    QScrollArea, QSpinBox, QDoubleSpinBox, QRadioButton,
+    QScrollArea, QSpinBox, QDoubleSpinBox,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QDoubleValidator, QPainter, QPen, QIcon, QPixmap
@@ -253,15 +253,19 @@ class ProductDialog(QDialog):
 
         cb_lay.addWidget(self._flabel("Case Mode"))
         mode_row = QHBoxLayout(); mode_row.setSpacing(16)
-        self.case_mode_linked  = QRadioButton("Linked to specific product")
-        self.case_mode_variant = QRadioButton("Linked to a variant group")
-        self.case_mode_linked.setChecked(True)
-        for rb in (self.case_mode_linked, self.case_mode_variant):
-            rb.setStyleSheet(f"color:{DARK_CARD};font-size:12px;")
-            mode_row.addWidget(rb)
+        # Styled as checkboxes (matching the rest of the app's checkbox
+        # look — a real checkmark glyph, not just a flat color fill) but
+        # behave like a two-way radio group: exactly one is always
+        # checked, enforced manually below since QCheckBox has no native
+        # mutual-exclusivity the way sibling QRadioButtons did.
+        self.case_mode_linked  = make_checkbox("Linked to specific product", checked=True)
+        self.case_mode_variant = make_checkbox("Linked to a variant group", checked=False)
+        for cb in (self.case_mode_linked, self.case_mode_variant):
+            mode_row.addWidget(cb)
         mode_row.addStretch()
         cb_lay.addLayout(mode_row)
-        self.case_mode_linked.toggled.connect(self._on_case_mode_changed)
+        self.case_mode_linked.clicked.connect(lambda: self._select_case_mode(True))
+        self.case_mode_variant.clicked.connect(lambda: self._select_case_mode(False))
 
         # ── Mode 1 panel: linked to a specific single product ─────────
         # Split into a selector column (left) and a restock column (right)
@@ -482,6 +486,7 @@ class ProductDialog(QDialog):
         self.case_restock_qty.setValue(1)
         self.case_restock_feedback.setText("")
         self.case_mode_linked.setChecked(True)
+        self.case_mode_variant.setChecked(False)  # no auto-exclusivity now that these are checkboxes, not radios
         self.f_case_qty2.setValue(1)
         self.pool_restock_qty.setValue(1)
         self.pool_restock_feedback.setText("")
@@ -767,6 +772,20 @@ class ProductDialog(QDialog):
             self.f_group.setEnabled(True)
             self.f_group.setToolTip("")
             self.stock_section.setVisible(bool(self._editing_product_id))
+
+    def _select_case_mode(self, linked: bool):
+        """Enforce the two case-mode checkboxes as a two-way exclusive
+        choice: clicking either one always selects it and deselects the
+        other, so the pair can never end up both checked or both
+        unchecked — matching what the old QRadioButton pair guaranteed
+        automatically, now that they're styled as checkboxes instead."""
+        self.case_mode_linked.blockSignals(True)
+        self.case_mode_variant.blockSignals(True)
+        self.case_mode_linked.setChecked(linked)
+        self.case_mode_variant.setChecked(not linked)
+        self.case_mode_linked.blockSignals(False)
+        self.case_mode_variant.blockSignals(False)
+        self._on_case_mode_changed()
 
     def _on_case_mode_changed(self):
         linked = self.case_mode_linked.isChecked()
