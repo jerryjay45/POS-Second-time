@@ -407,15 +407,15 @@ class SupervisorWindow(BaseWindow):
             card = QFrame()
             card.setStyleSheet(f"background:{WARM_WHITE};border-radius:8px;border:1px solid {BORDER};")
             cl = QVBoxLayout(card); cl.setContentsMargins(12,8,12,8); cl.setSpacing(2)
-            t = QLabel(label); t.setStyleSheet(f"color:{LABEL_TEXT};font-size:10px;font-weight:700;")
-            v = QLabel("—"); v.setStyleSheet(f"color:{color};font-size:22px;font-weight:700;")
+            t = QLabel(label); t.setStyleSheet(f"color:{LABEL_TEXT};font-size:10px;font-weight:700;border:none;")
+            v = QLabel("—"); v.setStyleSheet(f"color:{color};font-size:22px;font-weight:700;border:none;")
             cl.addWidget(t); cl.addWidget(v); self.rpt_cards[key] = v; cards.addWidget(card)
         rl.addLayout(cards)
 
         # Single action bar row
         sb = QHBoxLayout(); sb.setSpacing(8)
         self.rpt_session_header = QLabel("Select a cashier")
-        self.rpt_session_header.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:600;")
+        self.rpt_session_header.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:600;border:none;")
         self.rpt_search_bar = QLineEdit()
         self.rpt_search_bar.setPlaceholderText("🔍  #0012  or  2024-06-01  or  2024-06-01 to 2024-06-30")
         self.rpt_search_bar.setFixedHeight(30); self.rpt_search_bar.setFixedWidth(300)
@@ -1442,7 +1442,7 @@ class SupervisorWindow(BaseWindow):
         l = QLabel(text); l.setStyleSheet(f"color:{LABEL_TEXT};font-size:11px;font-weight:600;"); return l
 
     def _section_lbl(self, text):
-        l = QLabel(text.upper()); l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;"); return l
+        l = QLabel(text.upper()); l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;border:none;"); return l
 
     def _toggle(self, label, checked=False):
         cb = QCheckBox(label); cb.setChecked(checked)
