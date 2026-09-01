@@ -923,7 +923,7 @@ class SupervisorWindow(BaseWindow):
         self._vr_pg_prev = self._outline_btn("← Prev"); self._vr_pg_prev.setFixedWidth(80)
         self._vr_pg_prev.clicked.connect(self._vr_prev_page)
         self._vr_pg_label = QLabel("Page 1 of 1")
-        self._vr_pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        self._vr_pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;border:none;")
         self._vr_pg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._vr_pg_next = self._outline_btn("Next →"); self._vr_pg_next.setFixedWidth(80)
         self._vr_pg_next.clicked.connect(self._vr_next_page)
@@ -938,9 +938,9 @@ class SupervisorWindow(BaseWindow):
         rl = QVBoxLayout(right); rl.setContentsMargins(14,14,14,14); rl.setSpacing(8)
 
         self.vr_receipt_title = QLabel("Select a receipt")
-        self.vr_receipt_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;")
+        self.vr_receipt_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;border:none;")
         self.vr_receipt_meta  = QLabel("")
-        self.vr_receipt_meta.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:500;")
+        self.vr_receipt_meta.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:500;border:none;")
         self.vr_receipt_meta.setWordWrap(True)
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
@@ -956,12 +956,14 @@ class SupervisorWindow(BaseWindow):
         self.vr_items_table.setStyleSheet(self._table_style())
 
         self.vr_totals = QLabel("")
-        self.vr_totals.setStyleSheet(f"color:{DARK_CARD};font-size:12px;font-weight:600;")
+        self.vr_totals.setStyleSheet(f"color:{DARK_CARD};font-size:12px;font-weight:600;border:none;")
         self.vr_totals.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Refund mode
         mode_row = QHBoxLayout(); mode_row.setSpacing(8)
-        mode_row.addWidget(QLabel("Mode:"))
+        mode_lbl = QLabel("Mode:")
+        mode_lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;border:none;")
+        mode_row.addWidget(mode_lbl)
         self.vr_refund_mode = QComboBox()
         self.vr_refund_mode.addItems(["Full Void / Refund", "Partial Refund"])
         self.vr_refund_mode.setFixedHeight(30); self.vr_refund_mode.setStyleSheet(self._combo_style())
@@ -976,7 +978,7 @@ class SupervisorWindow(BaseWindow):
 
         # Selected amount label (for partial)
         self.vr_amount_lbl = QLabel("")
-        self.vr_amount_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;")
+        self.vr_amount_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;border:none;")
         self.vr_amount_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Status banner
@@ -1177,7 +1179,7 @@ class SupervisorWindow(BaseWindow):
                 from utils.print_manager import print_void
                 print_void(receipt, refund, voided_by_user=self.user, parent=self)
             self._vr_selected_tx_status="voided"; self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
-            self.vr_status_banner.setText(f"✓  Receipt #{self._vr_selected_tx_id} voided."); self.vr_status_banner.setStyleSheet(f"color:{RED};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
+            self.vr_status_banner.setText(f"✓  Receipt #{self._vr_selected_tx_id} voided."); self.vr_status_banner.setStyleSheet(f"color:{RED};font-size:12px;font-weight:600;border:none;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
         else: QMessageBox.critical(self, "Failed", "Could not void this receipt.")
 
@@ -1227,7 +1229,7 @@ class SupervisorWindow(BaseWindow):
                 from utils.print_manager import print_refund
                 print_refund(receipt, refund_rec, refunded_by_user=self.user, parent=self)
             self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
-            self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
+            self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;border:none;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
         else: QMessageBox.critical(self, "Failed", "Could not process refund.")
 
