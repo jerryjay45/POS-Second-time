@@ -715,6 +715,7 @@ class SupervisorWindow(BaseWindow):
         self.tx_status_filter.setFixedHeight(32); self.tx_status_filter.setFixedWidth(130)
         self.tx_status_filter.setStyleSheet(self._combo_style())
         search_btn = QPushButton("Search"); search_btn.setFixedHeight(32)
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         search_btn.setStyleSheet(self._accent_btn()); search_btn.clicked.connect(self._tx_search_fn)
         refresh_btn = self._outline_btn("↻  Refresh"); refresh_btn.clicked.connect(self._tx_search_fn)
         self.tx_reprint_btn = self._outline_btn("🖨  Reprint")
@@ -762,7 +763,12 @@ class SupervisorWindow(BaseWindow):
         self.tx_detail_title = QLabel("Select a transaction")
         self.tx_detail_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;")
         self.tx_detail_meta = QLabel(""); self.tx_detail_meta.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:500;"); self.tx_detail_meta.setWordWrap(True)
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine); sep.setStyleSheet(f"color:{BORDER};")
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        # QFrame::HLine ignores the QSS `color` property (that only affects
+        # text) and falls back to the native palette bevel line — setting
+        # `background` instead is what actually renders the intended border
+        # color, same fix already applied to separators elsewhere.
+        sep.setStyleSheet(f"background:{BORDER};max-height:1px;border:none;")
         self.tx_items_table = QTableWidget(); self.tx_items_table.setColumnCount(4)
         self.tx_items_table.setHorizontalHeaderLabels(["Item","Qty","Price","Total"])
         hh2 = self.tx_items_table.horizontalHeader()
@@ -800,7 +806,9 @@ class SupervisorWindow(BaseWindow):
         self.tx_table.setRowCount(0)
         R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
-        sc_map = {"completed":GREEN,"voided":RED,"refunded":AMBER_DARK}
+        # AMBER_DARK as text measures ~3.7:1, under the 4.5:1 WCAG floor —
+        # same failure pattern fixed elsewhere in this file.
+        sc_map = {"completed":GREEN,"voided":RED,"refunded":AMBER_TEXT_ON_LIGHT}
         for i, r in enumerate(receipts):
             self.tx_table.insertRow(i); self.tx_table.setRowHeight(i, 38)
             num = QTableWidgetItem(r["receipt_number"]); num.setData(Qt.ItemDataRole.UserRole, r["id"])
@@ -810,7 +818,7 @@ class SupervisorWindow(BaseWindow):
             self.tx_table.setItem(i, 1, QTableWidgetItem(cname))
             self.tx_table.setItem(i, 2, QTableWidgetItem(dt[:10]))
             self.tx_table.setItem(i, 3, QTableWidgetItem(dt[11:19]))
-            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R)
+            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER_TEXT_ON_LIGHT)); tot.setTextAlignment(R)
             self.tx_table.setItem(i, 4, tot)
             sc = sc_map.get(r["status"], MUTED)
             stat = QTableWidgetItem(r["status"].capitalize()); stat.setForeground(QColor(sc)); stat.setTextAlignment(C)
