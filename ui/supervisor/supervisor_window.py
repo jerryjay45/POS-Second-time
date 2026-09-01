@@ -892,6 +892,7 @@ class SupervisorWindow(BaseWindow):
         self.vr_status_filter.setFixedHeight(32); self.vr_status_filter.setFixedWidth(150)
         self.vr_status_filter.setStyleSheet(self._combo_style())
         search_btn = QPushButton("Search"); search_btn.setFixedHeight(32)
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         search_btn.setStyleSheet(self._accent_btn()); search_btn.clicked.connect(self._vr_search_fn)
         refresh_btn = self._outline_btn("↻  Refresh"); refresh_btn.clicked.connect(self._vr_search_fn)
         sr.addWidget(self.vr_search, stretch=1); sr.addWidget(self.vr_status_filter)
@@ -987,11 +988,25 @@ class SupervisorWindow(BaseWindow):
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         self.vr_void_btn = QPushButton("↩  Void Transaction"); self.vr_void_btn.setFixedHeight(34)
         self.vr_void_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.vr_void_btn.setStyleSheet(f"QPushButton{{background:{RED};color:white;border:none;border-radius:7px;font-size:12px;font-weight:700;}}QPushButton:hover{{background:#7A1E1E;}}QPushButton:disabled{{background:{MUTED};color:white;}}")
+        self.vr_void_btn.setStyleSheet(
+            f"QPushButton{{background:{RED};color:white;border:none;border-radius:7px;"
+            f"font-size:12px;font-weight:700;outline:none;}}"
+            f"QPushButton:hover{{background:#7A1E1E;}}"
+            f"QPushButton:pressed{{background:#5E1717;}}"
+            f"QPushButton:disabled{{background:{MUTED};color:white;}}"
+        )
         self.vr_void_btn.setEnabled(False); self.vr_void_btn.clicked.connect(self._vr_do_void)
         self.vr_refund_btn = QPushButton("↩  Issue Refund"); self.vr_refund_btn.setFixedHeight(34)
         self.vr_refund_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.vr_refund_btn.setStyleSheet(f"QPushButton{{background:{AMBER};color:white;border:none;border-radius:7px;font-size:12px;font-weight:700;}}QPushButton:hover{{background:{AMBER_DARK};}}QPushButton:disabled{{background:{MUTED};color:white;}}")
+        # White text on AMBER measured ~2.2:1 — same failure pattern found
+        # and fixed throughout the app. Dark text clears ~9.6:1.
+        self.vr_refund_btn.setStyleSheet(
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;border-radius:7px;"
+            f"font-size:12px;font-weight:700;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:disabled{{background:{MUTED};color:white;}}"
+        )
         self.vr_refund_btn.setEnabled(False); self.vr_refund_btn.clicked.connect(self._vr_do_refund)
         btn_row.addWidget(self.vr_void_btn, stretch=1); btn_row.addWidget(self.vr_refund_btn, stretch=1)
 
@@ -1035,7 +1050,9 @@ class SupervisorWindow(BaseWindow):
         self.vr_table.setRowCount(0)
         R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
         C = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
-        sc_map = {"completed":GREEN,"voided":RED,"refunded":AMBER_DARK}
+        # AMBER_DARK as text measures ~3.7:1, under the 4.5:1 WCAG floor —
+        # same failure pattern fixed elsewhere in this file.
+        sc_map = {"completed":GREEN,"voided":RED,"refunded":AMBER_TEXT_ON_LIGHT}
         for i, r in enumerate(receipts):
             self.vr_table.insertRow(i); self.vr_table.setRowHeight(i, 38)
             num = QTableWidgetItem(r["receipt_number"]); num.setData(Qt.ItemDataRole.UserRole, r["id"])
@@ -1043,7 +1060,7 @@ class SupervisorWindow(BaseWindow):
             dt = str(r["created_at"])
             self.vr_table.setItem(i, 0, num); self.vr_table.setItem(i, 1, QTableWidgetItem(cname))
             self.vr_table.setItem(i, 2, QTableWidgetItem(dt[:10])); self.vr_table.setItem(i, 3, QTableWidgetItem(dt[11:19]))
-            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER)); tot.setTextAlignment(R); self.vr_table.setItem(i, 4, tot)
+            tot = QTableWidgetItem(f"{format_currency(r['total'])}"); tot.setForeground(QColor(AMBER_TEXT_ON_LIGHT)); tot.setTextAlignment(R); self.vr_table.setItem(i, 4, tot)
             sc = sc_map.get(r["status"], MUTED); stat = QTableWidgetItem(r["status"].capitalize()); stat.setForeground(QColor(sc)); stat.setTextAlignment(C); self.vr_table.setItem(i, 5, stat)
         self._vr_pg_label.setText(f"Page {self._vr_pg_page + 1} of {pages}  ({total} receipts)")
         self._vr_pg_prev.setEnabled(self._vr_pg_page > 0)
