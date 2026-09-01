@@ -746,7 +746,7 @@ class SupervisorWindow(BaseWindow):
         self._tx_pg_prev = self._outline_btn("← Prev"); self._tx_pg_prev.setFixedWidth(80)
         self._tx_pg_prev.clicked.connect(self._tx_prev_page)
         self._tx_pg_label = QLabel("Page 1 of 1")
-        self._tx_pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        self._tx_pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;border:none;")
         self._tx_pg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._tx_pg_next = self._outline_btn("Next →"); self._tx_pg_next.setFixedWidth(80)
         self._tx_pg_next.clicked.connect(self._tx_next_page)
@@ -761,8 +761,8 @@ class SupervisorWindow(BaseWindow):
         right.setStyleSheet(f"background:{WHITE};border-radius:8px;border:1px solid {BORDER};")
         rl = QVBoxLayout(right); rl.setContentsMargins(14,14,14,14); rl.setSpacing(6)
         self.tx_detail_title = QLabel("Select a transaction")
-        self.tx_detail_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;")
-        self.tx_detail_meta = QLabel(""); self.tx_detail_meta.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:500;"); self.tx_detail_meta.setWordWrap(True)
+        self.tx_detail_title.setStyleSheet(f"color:{DARK_CARD};font-size:14px;font-weight:700;border:none;")
+        self.tx_detail_meta = QLabel(""); self.tx_detail_meta.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:500;border:none;"); self.tx_detail_meta.setWordWrap(True)
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         # QFrame::HLine ignores the QSS `color` property (that only affects
         # text) and falls back to the native palette bevel line — setting
@@ -776,7 +776,7 @@ class SupervisorWindow(BaseWindow):
         self.tx_items_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tx_items_table.verticalHeader().setVisible(False); self.tx_items_table.setShowGrid(False)
         self.tx_items_table.setStyleSheet(self._table_style())
-        self.tx_footer = QLabel(""); self.tx_footer.setStyleSheet(f"color:{DARK_CARD};font-size:12px;font-weight:600;")
+        self.tx_footer = QLabel(""); self.tx_footer.setStyleSheet(f"color:{DARK_CARD};font-size:12px;font-weight:600;border:none;")
         self.tx_footer.setAlignment(Qt.AlignmentFlag.AlignRight); self.tx_footer.setWordWrap(True)
         rl.addWidget(self.tx_detail_title); rl.addWidget(self.tx_detail_meta)
         rl.addWidget(sep); rl.addWidget(self.tx_items_table, stretch=1); rl.addWidget(self.tx_footer)
