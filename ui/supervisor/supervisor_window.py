@@ -401,7 +401,7 @@ class SupervisorWindow(BaseWindow):
         cards = QHBoxLayout(); cards.setSpacing(8)
         self.rpt_cards = {}
         for key, label, color in [
-            ("total_sales","TOTAL SALES",AMBER),("total_gct","TOTAL GCT",AMBER_DARK),
+            ("total_sales","TOTAL SALES",AMBER_TEXT_ON_LIGHT),("total_gct","TOTAL GCT",AMBER_TEXT_ON_LIGHT),
             ("transactions","TRANSACTIONS",BLUE),("discounts","DISCOUNTS",GREEN),
         ]:
             card = QFrame()
@@ -509,7 +509,7 @@ class SupervisorWindow(BaseWindow):
             live_sales = s.get("_sales", s.get("total_sales", 0))
             txns = s.get("_txns", 0)
             sales = QTableWidgetItem(f"{format_currency(live_sales)}  ({txns} txns)")
-            sales.setForeground(QColor(AMBER)); sales.setTextAlignment(R)
+            sales.setForeground(QColor(AMBER_TEXT_ON_LIGHT)); sales.setTextAlignment(R)
             for col, it in enumerate([num, stat, opened, closed, sales]):
                 self.rpt_session_list.setItem(i, col, it)
 
@@ -632,15 +632,20 @@ class SupervisorWindow(BaseWindow):
         btn_group.addButton(products_rb)
         btn_group.addButton(summary_rb)
         rb_style = (
-            f"QRadioButton{{color:{DARK_CARD};font-size:12px;spacing:8px;}}"
+            f"QRadioButton{{color:{DARK_CARD};font-size:12px;spacing:8px;outline:none;}}"
             f"QRadioButton::indicator{{width:16px;height:16px;border-radius:8px;"
             f"border:2px solid {BORDER};background:white;}}"
+            f"QRadioButton::indicator:hover{{border:2px solid {AMBER};}}"
             f"QRadioButton::indicator:checked{{border:2px solid {AMBER};"
             f"background:{AMBER};}}"
-            f"QRadioButton::indicator:hover{{border:2px solid {AMBER};}}"
+            f"QRadioButton::indicator:checked:hover{{border:2px solid {AMBER_DARK};"
+            f"background:{AMBER_DARK};}}"
+            f"QRadioButton::indicator:disabled{{background:{BORDER_LIGHT};border-color:{BORDER_LIGHT};}}"
+            f"QRadioButton:disabled{{color:{MUTED};}}"
         )
         for rb in (full_rb, products_rb, summary_rb):
             rb.setStyleSheet(rb_style)
+            rb.setCursor(Qt.CursorShape.PointingHandCursor)
             rb.setMinimumWidth(480)
         dl.addWidget(full_rb)
         dl.addWidget(products_rb)
@@ -664,13 +669,16 @@ class SupervisorWindow(BaseWindow):
         # Buttons
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         cancel_btn = QPushButton("Cancel"); cancel_btn.setFixedHeight(34)
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet(
             f"QPushButton{{background:{DARK_CARD};color:white;border:none;"
-            f"border-radius:7px;font-size:12px;padding:0 14px;}}"
+            f"border-radius:7px;font-size:12px;padding:0 14px;outline:none;}}"
             f"QPushButton:hover{{background:#444;}}"
+            f"QPushButton:pressed{{background:#222;}}"
         )
         cancel_btn.clicked.connect(dlg.reject)
         print_btn = QPushButton("🖨  Print"); print_btn.setFixedHeight(34)
+        print_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         print_btn.setStyleSheet(self._accent_btn())
         print_btn.clicked.connect(dlg.accept)
         btn_row.addWidget(cancel_btn); btn_row.addWidget(print_btn, stretch=1)
