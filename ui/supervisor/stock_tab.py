@@ -421,8 +421,9 @@ class StockTab(QWidget):
         dismiss_btn.setStyleSheet(
             f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_LIGHT};"
             f"border:1px solid {AMBER};border-radius:5px;font-size:11px;"
-            f"font-weight:600;padding:0 10px;}}"
+            f"font-weight:600;padding:0 10px;outline:none;}}"
             f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
         )
         dismiss_btn.clicked.connect(lambda: self.alert_frame.setVisible(False))
         af.addWidget(alert_icon); af.addWidget(self.alert_lbl, stretch=1); af.addWidget(dismiss_btn)
@@ -521,8 +522,9 @@ class StockTab(QWidget):
         self.pool_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pool_refresh_btn.setStyleSheet(
             f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_LIGHT};border:1px solid {AMBER};"
-            f"border-radius:5px;font-size:11px;font-weight:600;padding:0 10px;}}"
+            f"border-radius:5px;font-size:11px;font-weight:600;padding:0 10px;outline:none;}}"
             f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
         )
         self.pool_refresh_btn.clicked.connect(self._load_pool_table)
         pool_hdr.addWidget(self.pool_refresh_btn)
