@@ -40,6 +40,12 @@ from core.db_config import get as cfg_get
 from config import DB_PRODUCTS
 from ui.shared.checkbox import make_checkbox
 
+# AMBER_DARK (#BA7517) as text measured ~3.7:1 against white — under the
+# 4.5:1 WCAG floor for small text. Scoped locally rather than changing
+# the shared constant, which is used correctly elsewhere in this file as
+# a background/border/accent color.
+AMBER_TEXT_ON_LIGHT = "#8a5510"
+
 
 class ProductDialog(QDialog):
     """Add or edit a single product, as a pop-up (mirrors UserDialog)."""
@@ -870,7 +876,7 @@ class ProductDialog(QDialog):
         units = cases * (self.f_case_qty.value() or 1)
         adjust_stock(parent_id, -units, "Correction (case)", self.user["id"])
         self._refresh_case_stock_lbl()
-        self.case_restock_feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:10px;font-weight:600;")
+        self.case_restock_feedback.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:10px;font-weight:600;")
         self.case_restock_feedback.setText(
             f"✓  Removed {cases} case{'s' if cases != 1 else ''} ({units} units) from parent stock.")
 
@@ -972,7 +978,7 @@ class ProductDialog(QDialog):
         qty = self.pool_restock_qty.value()
         adjust_variant_group_stock(gid, -qty, "Correction", self.user["id"])
         self._on_case_variant_group_changed()
-        self.pool_restock_feedback.setStyleSheet(f"color:{AMBER_DARK};font-size:10px;font-weight:600;")
+        self.pool_restock_feedback.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:10px;font-weight:600;")
         self.pool_restock_feedback.setText(f"✓  Removed {qty} unit{'s' if qty != 1 else ''} from group stock.")
 
     # ================================================================
@@ -1069,7 +1075,7 @@ class ProductDialog(QDialog):
             f"QComboBox::down-arrow{{width:10px;height:10px;}}"
             f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
             f"border:1px solid {BORDER};outline:none;"
-            f"selection-background-color:{AMBER};selection-color:white;}}"
+            f"selection-background-color:{AMBER};selection-color:{DARK};}}"
         )
 
     def _accent_btn(self):
