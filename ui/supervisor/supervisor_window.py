@@ -32,6 +32,13 @@ from core.db_checkout import (
 )
 from core.db_config   import get_quick_keys, save_quick_keys, gct_rate
 
+# AMBER (#EF9F27) used directly as text measured well under the 4.5:1
+# WCAG floor against light backgrounds — same failure pattern found and
+# fixed throughout the app. Scoped locally rather than changing the
+# shared AMBER constant, which is used correctly elsewhere in this file
+# as a background/border/accent color.
+AMBER_TEXT_ON_LIGHT = "#8a5510"
+
 
 class SupervisorWindow(BaseWindow):
     logout_requested = pyqtSignal()
@@ -65,11 +72,16 @@ class SupervisorWindow(BaseWindow):
         left.setStyleSheet("color:white;font-size:13px;font-weight:600;")
         self._clock = QLabel()
         self._clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._clock.setStyleSheet(f"color:{MUTED};font-size:11px;font-family:'DM Mono',monospace;")
+        # MUTED (#6B6860) on the near-black topbar measured ~3.5:1 —
+        # under the 4.5:1 floor for this normal-sized text. Same failure
+        # already found and fixed in cashier_window.py's topbar clock.
+        self._clock.setStyleSheet("color:#9a9690;font-size:11px;font-family:'DM Mono',monospace;")
         logout = QPushButton("Logout  ↗"); logout.setFixedHeight(30)
         logout.setCursor(Qt.CursorShape.PointingHandCursor)
+        # White text on amber measured ~2.2:1 — same failure pattern
+        # found throughout the app. Dark text clears ~8.9:1.
         logout.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:15px;font-size:11px;font-weight:700;padding:0 16px;}}
             QPushButton:hover{{background:{AMBER_DARK};}}
         """)
@@ -947,7 +959,7 @@ class SupervisorWindow(BaseWindow):
 
         # Selected amount label (for partial)
         self.vr_amount_lbl = QLabel("")
-        self.vr_amount_lbl.setStyleSheet(f"color:{AMBER};font-size:12px;font-weight:600;")
+        self.vr_amount_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;")
         self.vr_amount_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Status banner
@@ -1182,7 +1194,7 @@ class SupervisorWindow(BaseWindow):
                 from utils.print_manager import print_refund
                 print_refund(receipt, refund_rec, refunded_by_user=self.user, parent=self)
             self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
-            self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
+            self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
         else: QMessageBox.critical(self, "Failed", "Could not process refund.")
 
@@ -1291,7 +1303,7 @@ class SupervisorWindow(BaseWindow):
             f"QComboBox::down-arrow{{width:10px;height:10px;}}"
             f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
             f"border:1px solid {BORDER};outline:none;"
-            f"selection-background-color:{AMBER};selection-color:white;}}"
+            f"selection-background-color:{AMBER};selection-color:{DARK};}}"
         )
 
     def _accent_btn(self):
@@ -1338,10 +1350,14 @@ class SupervisorWindow(BaseWindow):
 
     def _icon_btn(self, icon, tooltip=""):
         b = QPushButton(icon); b.setFixedSize(34,34); b.setToolTip(tooltip); b.setCursor(Qt.CursorShape.PointingHandCursor)
+        # AMBER as text on WARM_WHITE measured ~2.2:1 on hover — same
+        # failure pattern found and fixed throughout the app. Currently
+        # unused anywhere in the codebase, but fixed regardless in case
+        # it gets wired up later.
         b.setStyleSheet(
             f"QPushButton{{background:{WARM_WHITE};color:{DARK_CARD};border:1.5px solid {BORDER};"
             f"border-radius:7px;font-size:14px;font-weight:700;outline:none;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER_TEXT_ON_LIGHT};}}"
             f"QPushButton:pressed{{background:{AMBER_LIGHTEST};}}"
         )
         return b
