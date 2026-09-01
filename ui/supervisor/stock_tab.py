@@ -192,7 +192,7 @@ class HistoryDialog(QDialog):
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         table.verticalHeader().setVisible(False)
         table.setShowGrid(False)
         table.setStyleSheet(self._table_style())
@@ -220,6 +220,15 @@ class HistoryDialog(QDialog):
             lbl.setForeground(QColor(MUTED)); lbl.setTextAlignment(C)
             table.setItem(0, 0, lbl)
             table.setSpan(0, 0, 1, 5)
+
+        # Qt still tracks a "current" cell distinct from selection even with
+        # SelectionMode.NoSelection (confirmed: currentRow() == 0 right after
+        # population) — it wasn't a selection highlight, so disabling
+        # selection alone didn't remove it. It renders with the native
+        # focus/current-item style (a pale OS-default blue) since that state
+        # isn't covered by the ::item:selected rule below. Clearing the
+        # current index removes the stray highlight.
+        table.setCurrentCell(-1, -1)
 
         lay.addWidget(table, stretch=1)
 
@@ -281,10 +290,10 @@ class StockAdjustDialog(QDialog):
         sc.setContentsMargins(14, 10, 14, 10); sc.setSpacing(2)
         sc.addWidget(self._section_lbl("Current Stock"))
         self.stock_value_lbl = QLabel("—")
-        self.stock_value_lbl.setStyleSheet("font-size:22px;font-weight:800;")
+        self.stock_value_lbl.setStyleSheet("font-size:22px;font-weight:800;border:none;")
         sc.addWidget(self.stock_value_lbl)
         self.stock_note_lbl = QLabel("")
-        self.stock_note_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;font-weight:500;")
+        self.stock_note_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;font-weight:500;border:none;")
         self.stock_note_lbl.setWordWrap(True)
         self.stock_note_lbl.setVisible(False)
         sc.addWidget(self.stock_note_lbl)
@@ -342,7 +351,7 @@ class StockAdjustDialog(QDialog):
         p = get_product_by_id(self.product_id)
         stock = p["effective_stock"] if p else 0
         color = _stock_color(stock, self.threshold)
-        self.stock_value_lbl.setStyleSheet(f"color:{color};font-size:22px;font-weight:800;")
+        self.stock_value_lbl.setStyleSheet(f"color:{color};font-size:22px;font-weight:800;border:none;")
         self.stock_value_lbl.setText(f"{stock} unit{'s' if stock != 1 else ''}")
         if p and p.get("variant_group_id"):
             self.stock_note_lbl.setText(
@@ -376,7 +385,7 @@ class StockAdjustDialog(QDialog):
 
     def _section_lbl(self, text: str) -> QLabel:
         l = QLabel(text.upper())
-        l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;")
+        l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;border:none;")
         return l
 
 
@@ -412,9 +421,9 @@ class StockTab(QWidget):
         af = QHBoxLayout(self.alert_frame)
         af.setContentsMargins(12, 6, 12, 6); af.setSpacing(8)
         alert_icon = QLabel("⚠")
-        alert_icon.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:14px;font-weight:700;background:transparent;")
+        alert_icon.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:14px;font-weight:700;background:transparent;border:none;")
         self.alert_lbl = QLabel("")
-        self.alert_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;background:transparent;")
+        self.alert_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;background:transparent;border:none;")
         self.alert_lbl.setWordWrap(True)
         dismiss_btn = QPushButton("Dismiss"); dismiss_btn.setFixedHeight(26)
         dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -495,7 +504,7 @@ class StockTab(QWidget):
         self._pg_prev = self._outline_btn("← Prev"); self._pg_prev.setFixedWidth(80)
         self._pg_prev.clicked.connect(self._prev_page)
         self._pg_label = QLabel("Page 1 of 1")
-        self._pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        self._pg_label.setStyleSheet(f"color:{MUTED};font-size:11px;border:none;")
         self._pg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._pg_next = self._outline_btn("Next →"); self._pg_next.setFixedWidth(80)
         self._pg_next.clicked.connect(self._next_page)
@@ -514,7 +523,7 @@ class StockTab(QWidget):
 
         pool_hdr = QHBoxLayout()
         pool_title = QLabel("🔗  Variant Group Stock")
-        pool_title.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:700;background:transparent;")
+        pool_title.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:700;background:transparent;border:none;")
         pool_hdr.addWidget(pool_title)
         pool_hdr.addStretch()
         self.pool_refresh_btn = QPushButton("↻  Refresh")
@@ -575,7 +584,7 @@ class StockTab(QWidget):
         rl.addWidget(self.pool_table, stretch=1)
 
         self.pool_empty_lbl = QLabel("No variant groups have been set up yet.")
-        self.pool_empty_lbl.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.pool_empty_lbl.setStyleSheet(f"color:{MUTED};font-size:12px;border:none;")
         self.pool_empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.pool_empty_lbl.setVisible(False)
         rl.addWidget(self.pool_empty_lbl)
@@ -811,7 +820,7 @@ class StockTab(QWidget):
 
     def _section_lbl(self, text: str) -> QLabel:
         l = QLabel(text.upper())
-        l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;")
+        l.setStyleSheet(f"color:{MUTED};font-size:10px;font-weight:700;letter-spacing:1px;border:none;")
         return l
 
     def _table_style(self) -> str:
