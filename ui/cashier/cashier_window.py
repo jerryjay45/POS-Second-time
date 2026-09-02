@@ -1022,11 +1022,18 @@ class CashierWindow(BaseWindow):
             qty_spin = QSpinBox()
             qty_spin.setMinimum(1); qty_spin.setMaximum(9999)
             qty_spin.setValue(item["qty"])
+            # Explicit fixed height, comfortably inside the 38px row height
+            # set via setRowHeight() below. Left unset, a QSpinBox's natural
+            # sizeHint (which includes its up/down buttons) varies by
+            # platform/font metrics and can exceed the row height, clipping
+            # the widget's bottom edge — reported as values other than the
+            # initial "1" appearing cut off once the row is interacted with.
+            qty_spin.setFixedHeight(30)
             qty_spin.setStyleSheet(f"""
                 QSpinBox{{background:transparent;color:{DARK_CARD};
                 border:none;font-size:12px;font-weight:600;}}
                 QSpinBox:focus{{background:white;border:1px solid {AMBER};border-radius:4px;}}
-                QSpinBox::up-button,QSpinBox::down-button{{width:14px;}}
+                QSpinBox::up-button,QSpinBox::down-button{{width:14px;height:14px;}}
             """)
             # Qt centers the spinbox widget within its cell fine on its own,
             # but a QSpinBox defaults to left-aligned text — unlike every
