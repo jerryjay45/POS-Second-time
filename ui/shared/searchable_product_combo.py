@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor
 
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, BORDER,
-    DARK_CARD, MUTED, WARM_WHITE, WHITE,
+    DARK, DARK_CARD, MUTED, WARM_WHITE, WHITE,
 )
 from utils.currency import format_currency
 
@@ -161,7 +161,7 @@ class SearchableProductCombo(QWidget):
                 border-radius: 4px;
             }}
             QListWidget::item:hover {{ background: {AMBER_LIGHTEST}; }}
-            QListWidget::item:selected {{ background: {AMBER}; color: white; }}
+            QListWidget::item:selected {{ background: {AMBER}; color: {DARK}; }}
         """)
         self._list.itemClicked.connect(self._on_item_clicked)
         pl.addWidget(self._list)
