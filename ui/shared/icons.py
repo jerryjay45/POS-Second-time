@@ -13,7 +13,35 @@ import os
 import tempfile
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon
+
+
+def draw_icon(kind: str, color: str, size: int = 19) -> QIcon:
+    """Return a QIcon with a small hand-painted glyph (currently just
+    'clear', an X). Buttons that need an icon like this shouldn't depend
+    on a Unicode dingbat + font fallback chain — that can still render
+    off-center or at the wrong weight even once symbol_font() has found a
+    family that has the glyph at all, since font metrics (ascent/descent,
+    advance width) vary per family and don't guarantee the glyph sits
+    visually centered in a fixed-size button."""
+    scale = 4
+    s = size * scale
+    pm = QPixmap(s, s)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(s * 0.14)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    if kind == "clear":
+        m = s * 0.24
+        p.drawLine(int(m), int(m), int(s - m), int(s - m))
+        p.drawLine(int(s - m), int(m), int(m), int(s - m))
+    p.end()
+    pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+    return QIcon(pm)
 
 
 def checkmark_png(color: str = "#FFFFFF", size: int = 16) -> str:
