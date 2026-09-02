@@ -37,6 +37,13 @@ from ui.shared.theme import (
     MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN, GREEN_LIGHT, GREEN_BORDER,
 )
+from ui.shared.checkbox import make_checkbox
+
+# AMBER as text measures ~2.2:1 against white — well under the 4.5:1 WCAG
+# floor. Same failure pattern found and fixed throughout the app. Scoped
+# locally rather than changing the shared AMBER constant, which is used
+# correctly elsewhere in this file as a background/border/accent color.
+AMBER_TEXT_ON_LIGHT = "#8a5510"
 
 
 # ── Import worker (runs in background thread) ─────────────────────────────────
@@ -542,9 +549,11 @@ class DBFImportTab(QWidget):
         self.status_lbl.setText(f"Processing {done:,} / {total:,}…")
 
     def _on_row_done(self, result: dict):
+        # AMBER as text measures ~2.2:1 — under the WCAG floor. Same failure
+        # pattern fixed throughout the app.
         STATUS_COLORS = {
             "created": GREEN,
-            "updated": AMBER,
+            "updated": AMBER_TEXT_ON_LIGHT,
             "skipped": MUTED,
             "error":   RED,
         }
@@ -619,23 +628,19 @@ class DBFImportTab(QWidget):
         return d
 
     def _chk(self, label: str, checked: bool = True) -> QCheckBox:
-        cb = QCheckBox(label); cb.setChecked(checked)
-        cb.setStyleSheet(
-            f"QCheckBox{{color:{DARK_CARD};font-size:12px;}}"
-            f"QCheckBox::indicator{{width:15px;height:15px;"
-            f"border:1px solid {BORDER};border-radius:3px;background:{WHITE};}}"
-            f"QCheckBox::indicator:checked{{background:{AMBER};border-color:{AMBER};}}"
-        )
-        return cb
+        return make_checkbox(label, checked=checked, size=15, font_size=12)
 
     def _accent_btn(self, text: str) -> QPushButton:
         b = QPushButton(text); b.setFixedHeight(34)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
+        # White text on AMBER measured ~2.2:1 — same failure pattern found
+        # and fixed throughout the app. Dark text clears ~9.6:1.
         b.setStyleSheet(
-            f"QPushButton{{background:{AMBER};color:white;border:none;"
-            f"border-radius:8px;font-size:12px;font-weight:600;padding:0 16px;}}"
-            f"QPushButton:hover{{background:{AMBER_DARK};}}"
-            f"QPushButton:disabled{{background:{MUTED};color:#aaa;}}"
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;"
+            f"border-radius:8px;font-size:12px;font-weight:700;padding:0 16px;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:disabled{{background:{MUTED};color:white;}}"
         )
         return b
 
@@ -645,8 +650,9 @@ class DBFImportTab(QWidget):
         b.setStyleSheet(
             f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
             f"border:1.5px solid {BORDER};border-radius:8px;"
-            f"font-size:12px;font-weight:600;padding:0 14px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
+            f"font-size:12px;font-weight:600;padding:0 14px;outline:none;}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER_TEXT_ON_LIGHT};background:{AMBER_LIGHTEST};}}"
+            f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}"
         )
         return b
