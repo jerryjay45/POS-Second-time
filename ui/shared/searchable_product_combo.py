@@ -40,11 +40,18 @@ class SearchableProductCombo(QWidget):
 
     _LIMIT = 50   # max results per search
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, none_label: str = "— None (own price) —",
+                 show_price: bool = False, price_field: str = "effective_cost",
+                 exclude_cases: bool = True, exclude_variant_members: bool = True):
         super().__init__(parent)
         self._selected_id   = None
         self._selected_name = ""
         self._exclude_id    = None
+        self._none_label    = none_label
+        self._show_price    = show_price
+        self._price_field   = price_field
+        self._exclude_cases = exclude_cases
+        self._exclude_variant_members = exclude_variant_members
         self._debounce      = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -68,7 +75,10 @@ class SearchableProductCombo(QWidget):
         if p:
             self._selected_id   = p["id"]
             self._selected_name = p["name"]
-            self._trigger.setText(p["name"])
+            label = p["name"]
+            if self._show_price:
+                label += f"  ({format_currency(p[self._price_field])})"
+            self._trigger.setText(label)
             self._update_trigger_style(selected=True)
         else:
             self.clear_value()
@@ -76,7 +86,7 @@ class SearchableProductCombo(QWidget):
     def clear_value(self):
         self._selected_id   = None
         self._selected_name = ""
-        self._trigger.setText("— None (own price) —")
+        self._trigger.setText(self._none_label)
         self._update_trigger_style(selected=False)
 
     def exclude_id(self, product_id: int | None):
@@ -91,7 +101,7 @@ class SearchableProductCombo(QWidget):
         layout.setSpacing(0)
 
         # Trigger button
-        self._trigger = QPushButton("— None (own price) —")
+        self._trigger = QPushButton(self._none_label)
         self._trigger.setFixedHeight(34)
         self._trigger.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_trigger_style(selected=False)
@@ -192,13 +202,15 @@ class SearchableProductCombo(QWidget):
         if not text:
             return
         results = get_products(search=text, limit=self._LIMIT)
-        # Filter out cases, variant-group members (they have no stock of
-        # their own to link a case to — use the variant-group picker
-        # instead), and the excluded product.
+        # Case-linking (the original use of this widget) can't point at
+        # another case or at a variant-group member (no stock of its own).
+        # Other consumers — e.g. Quick Keys, which assigns a real sellable
+        # product to an F-key — don't want this exclusion, so it's
+        # configurable rather than hardcoded.
         results = [
             p for p in results
-            if not p["is_case"]
-            and not p["variant_group_id"]
+            if (not self._exclude_cases or not p["is_case"])
+            and (not self._exclude_variant_members or not p["variant_group_id"])
             and p["id"] != self._exclude_id
         ]
         self._list.clear()
@@ -213,17 +225,21 @@ class SearchableProductCombo(QWidget):
             )
             for p in results:
                 # Alias-group members DO keep their own stock but share cost
-                # with the group — show effective_cost so it's never stale.
-                item = QListWidgetItem(f"{p['name']}  ({format_currency(p['effective_cost'])})")
+                # with the group — show the effective_* field so it's never
+                # stale (effective_cost for case-linking, effective_selling_
+                # price for consumers like Quick Keys that show what the
+                # customer pays, not the store's cost).
+                price = p[self._price_field]
+                item = QListWidgetItem(f"{p['name']}  ({format_currency(price)})")
                 item.setData(Qt.ItemDataRole.UserRole, p["id"])
                 item.setData(Qt.ItemDataRole.UserRole + 1, p["name"])
-                item.setData(Qt.ItemDataRole.UserRole + 2, p["effective_cost"])
+                item.setData(Qt.ItemDataRole.UserRole + 2, price)
                 if p["id"] == self._selected_id:
                     item.setSelected(True)
                 self._list.addItem(item)
 
     def _populate_none_item(self):
-        none_item = QListWidgetItem("— None (own price) —")
+        none_item = QListWidgetItem(self._none_label)
         none_item.setData(Qt.ItemDataRole.UserRole, None)
         none_item.setForeground(QColor(MUTED))
         self._list.addItem(none_item)
@@ -231,13 +247,14 @@ class SearchableProductCombo(QWidget):
     def _on_item_clicked(self, item: QListWidgetItem):
         pid   = item.data(Qt.ItemDataRole.UserRole)
         name  = item.data(Qt.ItemDataRole.UserRole + 1) or ""
-        cost  = item.data(Qt.ItemDataRole.UserRole + 2)
+        price = item.data(Qt.ItemDataRole.UserRole + 2)
         if pid is None:
             self.clear_value()
         else:
             self._selected_id   = pid
             self._selected_name = name
-            self._trigger.setText(name)
+            label = f"{name}  ({format_currency(price)})" if self._show_price else name
+            self._trigger.setText(label)
             self._update_trigger_style(selected=True)
         self._popup.hide()
         self.selectionChanged.emit(self._selected_id, self._selected_name)
