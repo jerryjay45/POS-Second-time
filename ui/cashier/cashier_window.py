@@ -1028,6 +1028,14 @@ class CashierWindow(BaseWindow):
                 QSpinBox:focus{{background:white;border:1px solid {AMBER};border-radius:4px;}}
                 QSpinBox::up-button,QSpinBox::down-button{{width:14px;}}
             """)
+            # Qt centers the spinbox widget within its cell fine on its own,
+            # but a QSpinBox defaults to left-aligned text — unlike every
+            # other numeric column here (Price/Discount/GCT/Total), which
+            # explicitly center their QTableWidgetItem text. Left alone, the
+            # qty digit sits shifted toward the left edge of an otherwise-
+            # centered box, out of step with the centered numbers on either
+            # side of it in the row.
+            qty_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_spin.valueChanged.connect(lambda val, r=row: self._update_qty(r, val))
             self.cart_table.setCellWidget(row, 1, qty_spin)
 
