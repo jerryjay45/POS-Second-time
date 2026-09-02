@@ -1246,37 +1246,43 @@ class SupervisorWindow(BaseWindow):
         return PriceTagTab(self.user, parent=self)
 
     def _build_quickkeys_tab(self):
+        from ui.shared.searchable_product_combo import SearchableProductCombo
         w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
         lay = QVBoxLayout(w); lay.setContentsMargins(20,20,20,20); lay.setSpacing(10)
-        hint = QLabel("Assign a product to each F-key (F1–F8). Start typing a product name to search.")
+        hint = QLabel("Assign a product to each F-key (F1–F8). Type a product name or barcode to search — select from the results.")
         hint.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;"); lay.addWidget(hint)
-        self._qk_inputs = []
+        self._qk_widgets = []
         for k in get_quick_keys():
             row = QHBoxLayout(); row.setSpacing(10)
             badge = QLabel(f"F{k['slot']}"); badge.setFixedSize(40,32); badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             badge.setStyleSheet(f"background:{DARK_CARD};color:{AMBER};border-radius:6px;font-size:11px;font-weight:700;")
-            inp = QLineEdit(); inp.setFixedHeight(34)
-            inp.setPlaceholderText("Search products…")
-            inp.setText(f"{k['product_name']} ({format_currency(k['product_price'])})" if k.get("product_name") else "")
-            inp.setStyleSheet(self._input_style(accent=bool(k.get("product_name"))))
-            inp.setProperty("slot", k["slot"]); inp.setProperty("product_id", k.get("product_id"))
-            row.addWidget(badge); row.addWidget(inp, stretch=1)
-            lay.addLayout(row); self._qk_inputs.append(inp)
+            # Same picker used for case-linking elsewhere in the app — searches
+            # barcode AND name (and group names) server-side, matching every
+            # other search bar. Unlike the case-linking use, Quick Keys can
+            # assign ANY sellable product (cases, variant-group members
+            # included) and should show the customer-facing selling price,
+            # not wholesale cost.
+            sw = SearchableProductCombo(
+                none_label="— No product assigned —", show_price=True,
+                price_field="effective_selling_price",
+                exclude_cases=False, exclude_variant_members=False,
+            )
+            if k.get("product_id"):
+                sw.set_value(k["product_id"])
+            sw.setProperty("slot", k["slot"])
+            row.addWidget(badge); row.addWidget(sw, stretch=1)
+            lay.addLayout(row); self._qk_widgets.append(sw)
         lay.addStretch()
         save_btn = QPushButton("💾  Save Quick Keys"); save_btn.setFixedHeight(42)
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(self._accent_btn()); save_btn.clicked.connect(self._qk_save); lay.addWidget(save_btn)
         return w
 
     def _qk_save(self):
-        assignments = []
-        for inp in self._qk_inputs:
-            slot = inp.property("slot"); pid = inp.property("product_id"); text = inp.text().strip()
-            if not pid and text:
-                results = get_products(search=text, limit=1)
-                if results: pid = results[0]["id"]; inp.setProperty("product_id", pid)
-            # Only slot + product_id are stored — name/price are resolved
-            # live from products.db on every read, never snapshotted here.
-            assignments.append({"slot": slot, "product_id": pid})
+        assignments = [
+            {"slot": sw.property("slot"), "product_id": sw.selected_id()}
+            for sw in self._qk_widgets
+        ]
         save_quick_keys(assignments)
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
