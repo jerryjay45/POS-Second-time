@@ -14,17 +14,17 @@ from PyQt6.QtWidgets import (  # cashier_window
     QHeaderView, QAbstractItemView, QListWidget, QListWidgetItem,
     QSpinBox, QMessageBox, QDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, QDateTime
+from PyQt6.QtCore import Qt, QTimer, QDateTime, QSize
 from PyQt6.QtGui  import QColor, QKeySequence
 
 from ui.base_window   import BaseWindow
 from utils.currency   import format_currency
+from ui.shared.icons  import draw_icon
 from ui.shared.theme  import (
     AMBER, AMBER_DARK, AMBER_LIGHT, AMBER_LIGHTEST, AMBER_BG,
     DARK, DARK_2, DARK_3, DARK_4, DARK_CARD,
     WARM_WHITE, WHITE, BORDER, BORDER_LIGHT, MUTED, LABEL_TEXT,
     RED, RED_LIGHT, GREEN,
-    symbol_font,
 )
 from core.db_users    import open_session, add_session_sales, get_open_session
 from core.db_config   import get_quick_keys, gct_rate, get_bool
@@ -1040,17 +1040,37 @@ class CashierWindow(BaseWindow):
             ))
             self.cart_table.setItem(row, 5, cell(format_currency(item['total']), AMBER_TABLE_TEXT, C))
 
-            rm = QPushButton("✕")
-            rm.setFont(symbol_font(point_size=12))
+            # A bare QPushButton passed to setCellWidget gets stretched by
+            # Qt to fill the *entire* cell rect (60×38 here) — there's no
+            # automatic centering. That's what made this look "off": a
+            # 60×38 rectangle with a border-radius:4px doesn't read as a
+            # centered icon button the way it does in every other icon-only
+            # button in the app, which are all fixed-size. Wrapping it in a
+            # small centering container fixes that regardless of column
+            # width. The glyph itself is now hand-drawn (see
+            # ui.shared.icons.draw_icon) rather than the "✕" symbol-font
+            # character — symbol_font() guarantees the glyph exists on the
+            # running system, but font metrics still vary per family, so
+            # the character itself can sit slightly off-center within a
+            # fixed-size button even once a font that has it is found.
+            rm = QPushButton()
+            rm.setIcon(draw_icon("clear", "white")); rm.setIconSize(QSize(12, 12))
+            rm.setFixedSize(26, 26)
             rm.setStyleSheet(f"""
-                QPushButton{{background:{RED};color:white;border:none;
-                border-radius:4px;font-size:12px;font-weight:800;
-                min-width:26px;min-height:26px;}}
+                QPushButton{{background:{RED};border:none;
+                border-radius:5px;outline:none;}}
                 QPushButton:hover{{background:#7A1E1E;}}
+                QPushButton:pressed{{background:#5E1717;}}
             """)
             rm.setCursor(Qt.CursorShape.PointingHandCursor)
+            rm.setToolTip("Remove item")
             rm.clicked.connect(lambda _, r=row: self._handle_remove(r))
-            self.cart_table.setCellWidget(row, 6, rm)
+            rm_wrap = QWidget()
+            rw = QHBoxLayout(rm_wrap)
+            rw.setContentsMargins(0, 0, 0, 0)
+            rw.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            rw.addWidget(rm)
+            self.cart_table.setCellWidget(row, 6, rm_wrap)
             self.cart_table.setRowHeight(row, 38)
 
     def _update_totals(self):
