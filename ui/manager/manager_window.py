@@ -78,11 +78,16 @@ class ManagerWindow(SupervisorWindow):
         left = QLabel(f"POS System  |  Manager:  {self.user['full_name']}")
         left.setStyleSheet("color:white;font-size:13px;font-weight:600;")
         self._clock = QLabel(); self._clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._clock.setStyleSheet(f"color:{MUTED};font-size:11px;font-family:'DM Mono',monospace;")
+        # MUTED (#6B6860) on the near-black topbar measured ~3.5:1 — under
+        # the 4.5:1 floor. Same failure already found and fixed in
+        # supervisor_window.py's/cashier_window.py's topbar clocks.
+        self._clock.setStyleSheet("color:#9a9690;font-size:11px;font-family:'DM Mono',monospace;")
         logout = QPushButton("Logout  ↗"); logout.setFixedHeight(30)
         logout.setCursor(Qt.CursorShape.PointingHandCursor)
+        # White text on amber measured ~2.2:1 — same failure pattern
+        # found throughout the app. Dark text clears ~8.9:1.
         logout.setStyleSheet(f"""
-            QPushButton{{background:{AMBER};color:white;border:none;
+            QPushButton{{background:{AMBER};color:{DARK};border:none;
             border-radius:15px;font-size:11px;font-weight:700;padding:0 16px;}}
             QPushButton:hover{{background:{AMBER_DARK};}}
         """)
@@ -540,7 +545,7 @@ class ManagerWindow(SupervisorWindow):
         refresh_receipt.setFont(symbol_font())
         refresh_receipt.setToolTip("Refresh printer list")
         refresh_receipt.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_receipt.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:17px;font-size:14px;font-weight:700;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:white;}}")
+        refresh_receipt.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:17px;font-size:14px;font-weight:700;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}")
         refresh_receipt.clicked.connect(lambda: self._printers_refresh_list(self.ps_receipt_combo))
 
         receipt_box = QFrame()
@@ -588,7 +593,7 @@ class ManagerWindow(SupervisorWindow):
         detect_btn = QPushButton("Auto-Detect")
         detect_btn.setFixedHeight(34)
         detect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        detect_btn.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:7px;padding:0 12px;font-size:12px;font-weight:600;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:white;}}")
+        detect_btn.setStyleSheet(f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};border-radius:7px;padding:0 12px;font-size:12px;font-weight:600;outline:none;}}QPushButton:hover{{background:{AMBER};color:{DARK};}}QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}")
         detect_btn.clicked.connect(self._printers_detect_width)
 
         width_box = QFrame()
@@ -672,7 +677,7 @@ class ManagerWindow(SupervisorWindow):
             f"QPushButton{{background:transparent;color:{AMBER_TEXT_ON_WHITE};border:1.5px solid {AMBER};"
             f"border-radius:8px;font-size:13px;font-weight:600;outline:none;}}"
             f"QPushButton:hover{{background:{AMBER};color:{DARK};}}"
-            f"QPushButton:pressed{{background:{AMBER_DARK};color:white;}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
         )
         test_btn.clicked.connect(self._printers_test)
         save_btn = QPushButton("💾  Save Printer Settings"); save_btn.setFixedHeight(38)
@@ -1112,7 +1117,7 @@ class ManagerWindow(SupervisorWindow):
             f"QComboBox::drop-down{{border:none;width:20px;}}"
             f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
             f"border:1px solid {BORDER};outline:none;"
-            f"selection-background-color:{AMBER};selection-color:white;}}"
+            f"selection-background-color:{AMBER};selection-color:{DARK};}}"
         )
 
     def _accent_btn(self):
