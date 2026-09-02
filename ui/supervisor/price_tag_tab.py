@@ -22,13 +22,21 @@ from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_BG, AMBER_LIGHTEST,
     DARK, DARK_4, DARK_CARD,
     WHITE, WARM_WHITE, BORDER, BORDER_LIGHT,
-    MUTED, LABEL_TEXT, GREEN, GREEN_LIGHT,
+    MUTED, LABEL_TEXT, GREEN, GREEN_LIGHT, RED,
     symbol_font,
 )
 from core.db_products import get_products, count_products, get_discount_levels
 from utils.currency import format_currency
 from core.db_config import get as cfg_get, gct_rate
 from config import LABEL_DIR
+from ui.shared.checkbox import make_checkbox
+
+# AMBER_DARK (#BA7517) as text measures ~3.7:1 against white — under the
+# 4.5:1 WCAG floor for small text. Same failure pattern found and fixed
+# throughout the app. Scoped locally rather than changing the shared
+# constant, which is used correctly elsewhere in this file as a
+# background/border/accent color.
+AMBER_TEXT_ON_LIGHT = "#8a5510"
 
 # ── Label / page size catalogue ───────────────────────────────────────────────
 _LABEL_SIZES = [
@@ -244,7 +252,7 @@ class PriceTagTab(QWidget):
         sel_all = self._outline_btn("☑  Select All"); sel_all.clicked.connect(self._select_all)
         clr     = self._outline_btn("☐  Clear");      clr.clicked.connect(self._clear_selection)
         self.sel_lbl = QLabel("0 selected")
-        self.sel_lbl.setStyleSheet(f"color:{AMBER_DARK};font-size:12px;font-weight:600;")
+        self.sel_lbl.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;")
         sel_row.addWidget(sel_all); sel_row.addWidget(clr)
         sel_row.addStretch(); sel_row.addWidget(self.sel_lbl)
         lay.addLayout(sel_row)
@@ -336,10 +344,13 @@ class PriceTagTab(QWidget):
 
         self.print_btn = QPushButton("🖨  Preview && Print"); self.print_btn.setFixedHeight(42)
         self.print_btn.setCursor(Qt.CursorShape.PointingHandCursor); self.print_btn.setEnabled(False)
+        # White text on AMBER measured ~2.2:1 — same failure pattern found
+        # and fixed throughout the app. Dark text clears ~9.6:1.
         self.print_btn.setStyleSheet(
-            f"QPushButton{{background:{AMBER};color:white;border:none;"
-            f"border-radius:8px;font-size:14px;font-weight:700;}}"
-            f"QPushButton:hover{{background:{AMBER_DARK};}}"
+            f"QPushButton{{background:{AMBER};color:{DARK};border:none;"
+            f"border-radius:8px;font-size:14px;font-weight:700;outline:none;}}"
+            f"QPushButton:hover{{background:{AMBER_DARK};color:{DARK};}}"
+            f"QPushButton:pressed{{background:{AMBER_DARK};color:{DARK};}}"
             f"QPushButton:disabled{{background:{MUTED};color:white;}}")
         self.print_btn.clicked.connect(lambda: self._do_print(False))
         lay.addWidget(self.print_btn)
@@ -348,8 +359,9 @@ class PriceTagTab(QWidget):
         self.pdf_btn.setCursor(Qt.CursorShape.PointingHandCursor); self.pdf_btn.setEnabled(False)
         self.pdf_btn.setStyleSheet(
             f"QPushButton{{background:{GREEN_LIGHT};color:{GREEN};border:none;"
-            f"border-radius:7px;font-size:12px;font-weight:600;}}"
+            f"border-radius:7px;font-size:12px;font-weight:600;outline:none;}}"
             f"QPushButton:hover{{background:{GREEN};color:white;}}"
+            f"QPushButton:pressed{{background:#134D28;color:white;}}"
             f"QPushButton:disabled{{background:{WARM_WHITE};color:{MUTED};}}")
         self.pdf_btn.clicked.connect(lambda: self._do_print(True))
         lay.addWidget(self.pdf_btn)
@@ -402,7 +414,7 @@ class PriceTagTab(QWidget):
                 + (" +GCT" if p.get("gct_applicable") else ""))
             pi.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             f = pi.font(); f.setBold(True); pi.setFont(f)
-            pi.setForeground(QColor(AMBER_DARK)); tbl.setItem(row, 2, pi)
+            pi.setForeground(QColor(AMBER_TEXT_ON_LIGHT)); tbl.setItem(row, 2, pi)
 
             # Build disc_rows — read the effective_* discount fields so a
             # variant/alias-group member shows the group's discount setup,
@@ -435,7 +447,7 @@ class PriceTagTab(QWidget):
 
             di = QTableWidgetItem(f"{disc_rows[0][0]}+ @ {disc_rows[0][2]}"
                                   if disc_rows else "—")
-            di.setForeground(QColor(GREEN) if disc_rows else QColor("#C8C4BC"))
+            di.setForeground(QColor(GREEN) if disc_rows else QColor(MUTED))
             di.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
             tbl.setItem(row, 3, di)
 
@@ -445,7 +457,8 @@ class PriceTagTab(QWidget):
             qty_spin.setEnabled(pid in self._selected)
             qty_spin.setStyleSheet(
                 f"QSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-                f"border-radius:5px;padding:0 4px;font-size:11px;}}"
+                f"border-radius:5px;padding:0 4px;font-size:11px;outline:none;}}"
+                f"QSpinBox:hover{{border-color:{AMBER_LIGHTEST};}}"
                 f"QSpinBox:focus{{border-color:{AMBER};}}"
                 f"QSpinBox:disabled{{background:{WARM_WHITE};color:{MUTED};}}")
             qty_spin.valueChanged.connect(lambda v, b=pid: self._on_qty_changed(b, v))
@@ -599,6 +612,7 @@ class PriceTagTab(QWidget):
                 printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
                 printer.setOutputFileName(pdf_path)
                 self._render(printer, job, cols, opts)
+                self.status_lbl.setStyleSheet(f"color:{GREEN};font-size:11px;")
                 self.status_lbl.setText(f"✅  Saved {len(job)} label(s) to PDF.")
             else:
                 dlg = QPrintPreviewDialog(printer, self)
@@ -607,9 +621,15 @@ class PriceTagTab(QWidget):
                     self._render(_p, _j, _c, _o)
                 dlg.paintRequested.connect(lambda _: _paint())
                 dlg.resize(1000, 700); dlg.exec()
+                self.status_lbl.setStyleSheet(f"color:{GREEN};font-size:11px;")
                 self.status_lbl.setText(f"✅  Sent {len(job)} label(s) to printer.")
 
         except Exception as e:
+            # Status label defaults to GREEN (set once, in _build_right) for
+            # the success messages above — without resetting it here, an
+            # error would render in green text right next to its own "❌",
+            # which reads as good news. RED makes the failure state legible.
+            self.status_lbl.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
             self.status_lbl.setText(f"❌  {e}")
             import traceback; traceback.print_exc()
 
@@ -644,8 +664,9 @@ class PriceTagTab(QWidget):
         b.setStyleSheet(
             f"QPushButton{{background:transparent;color:{LABEL_TEXT};"
             f"border:1.5px solid {BORDER};border-radius:16px;"
-            f"font-size:11px;font-weight:600;padding:0 12px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER};}}"
+            f"font-size:11px;font-weight:600;padding:0 12px;outline:none;}}"
+            f"QPushButton:hover{{border-color:{AMBER};color:{AMBER_TEXT_ON_LIGHT};background:{AMBER_LIGHTEST};}}"
+            f"QPushButton:pressed{{background:{BORDER_LIGHT};}}"
             f"QPushButton:disabled{{color:{MUTED};border-color:{BORDER_LIGHT};}}")
         return b
 
@@ -711,8 +732,9 @@ class PriceTagTab(QWidget):
         b.setIconSize(QSize(19, 19))
         b.setStyleSheet(
             f"QPushButton{{background:{WARM_WHITE};border:1.5px solid {BORDER};"
-            f"border-radius:7px;}}"
-            f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}")
+            f"border-radius:7px;outline:none;}}"
+            f"QPushButton:hover{{border-color:{AMBER};background:{AMBER_LIGHTEST};}}"
+            f"QPushButton:pressed{{background:{BORDER_LIGHT};}}")
         return b
 
     def _section_lbl(self, text):
@@ -726,13 +748,7 @@ class PriceTagTab(QWidget):
         return l
 
     def _toggle(self, label, checked=True):
-        cb = QCheckBox(label); cb.setChecked(checked)
-        cb.setStyleSheet(
-            f"QCheckBox{{color:{DARK_CARD};font-size:12px;}}"
-            f"QCheckBox::indicator{{width:15px;height:15px;"
-            f"border:1px solid {BORDER};border-radius:3px;background:{WHITE};}}"
-            f"QCheckBox::indicator:checked{{background:{AMBER};border-color:{AMBER};}}")
-        return cb
+        return make_checkbox(label, checked=checked, size=16, font_size=12)
 
     def _div(self):
         d = QFrame(); d.setFrameShape(QFrame.Shape.HLine)
@@ -741,18 +757,24 @@ class PriceTagTab(QWidget):
 
     def _input_style(self):
         return (f"QLineEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-                f"border-radius:7px;padding:0 10px;font-size:13px;}}"
+                f"border-radius:7px;padding:0 10px;font-size:13px;outline:none;}}"
+                f"QLineEdit:hover{{border-color:{AMBER_LIGHTEST};}}"
                 f"QLineEdit:focus{{border-color:{AMBER};}}")
 
     def _combo_style(self):
         return (f"QComboBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-                f"border-radius:7px;padding:0 10px;font-size:13px;}}"
+                f"border-radius:7px;padding:0 10px;font-size:13px;outline:none;}}"
+                f"QComboBox:hover{{border-color:{AMBER_LIGHTEST};}}"
                 f"QComboBox:focus{{border-color:{AMBER};}}"
-                f"QComboBox::drop-down{{border:none;width:20px;}}")
+                f"QComboBox::drop-down{{border:none;width:20px;}}"
+                f"QComboBox QAbstractItemView{{background:{WHITE};color:{DARK_CARD};"
+                f"border:1px solid {BORDER};outline:none;"
+                f"selection-background-color:{AMBER};selection-color:{DARK};}}")
 
     def _spinbox_style(self):
         return (f"QSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
-                f"border-radius:7px;padding:0 8px;font-size:12px;}}"
+                f"border-radius:7px;padding:0 8px;font-size:12px;outline:none;}}"
+                f"QSpinBox:hover{{border-color:{AMBER_LIGHTEST};}}"
                 f"QSpinBox:focus{{border-color:{AMBER};}}")
 
     def _table_style(self):
