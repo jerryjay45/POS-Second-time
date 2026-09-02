@@ -1097,6 +1097,7 @@ class SupervisorWindow(BaseWindow):
         from core.db_checkout import get_remaining_refundable_qty
         for r, it in enumerate(self._vr_items_data):
             remaining = get_remaining_refundable_qty(it["id"])
+            self.vr_items_table.setRowHeight(r, 38)
             self.vr_items_table.setItem(r, 0, QTableWidgetItem(it["product_name"]))
             sold = QTableWidgetItem(str(it["quantity"])); sold.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.vr_items_table.setItem(r, 1, sold)
@@ -1105,6 +1106,14 @@ class SupervisorWindow(BaseWindow):
             qty_spin.setMinimum(0); qty_spin.setMaximum(remaining)
             qty_spin.setValue(remaining)  # default: refund everything left on this line
             qty_spin.setEnabled(is_partial and remaining > 0)
+            # Explicit fixed height, comfortably inside the 38px row height
+            # set above. Left unset, a QSpinBox's natural sizeHint (which
+            # includes its up/down buttons) varies by platform/font metrics
+            # and can exceed the row height, clipping the widget's bottom
+            # edge — same issue and same fix as the cart's per-row qty
+            # spinbox in cashier_window.py.
+            qty_spin.setFixedHeight(30)
+            qty_spin.setStyleSheet(self._input_style())
             if remaining == 0:
                 qty_spin.setToolTip("Already fully refunded/voided — nothing left on this line.")
             qty_spin.valueChanged.connect(self._vr_update_selected_amount)
