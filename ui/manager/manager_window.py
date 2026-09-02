@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QScrollArea, QSplitter, QSpinBox, QDoubleSpinBox,
     QListWidget, QListWidgetItem, QFormLayout, QDialog,
 )
-from PyQt6.QtCore  import Qt, QEvent, pyqtSignal
+from PyQt6.QtCore  import Qt, pyqtSignal
 from PyQt6.QtGui   import QColor, QDoubleValidator
 
 from ui.supervisor.supervisor_window import SupervisorWindow
@@ -40,97 +40,6 @@ from ui.shared.checkbox import make_checkbox
 # locally rather than changing the shared AMBER constant, which is used
 # correctly elsewhere in this file as a background/accent color.
 AMBER_TEXT_ON_WHITE = "#8a5510"
-
-
-# ================================================================
-# PRODUCT SEARCH WIDGET  (Google-style live search dropdown)
-# ================================================================
-
-class ProductSearchWidget(QWidget):
-    """
-    Type to filter products → inline dropdown → click/Enter to confirm.
-    Call currentData() to get selected product ID (None = unassigned).
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._selected_pid = None
-        self._all_products = []   # [(id, name, price), …]
-        self._build()
-
-    def _build(self):
-        lay = QVBoxLayout(self); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
-        self.inp = QLineEdit(); self.inp.setFixedHeight(34)
-        self.inp.setPlaceholderText("Search products…")
-        self.inp.setStyleSheet(f"""
-            QLineEdit{{background:{WHITE};color:{DARK_CARD};
-            border:1px solid {BORDER};border-radius:7px;padding:0 10px;font-size:12px;}}
-            QLineEdit:focus{{border-color:{AMBER};}}
-        """)
-        self.inp.textChanged.connect(self._on_text)
-        self.inp.installEventFilter(self)
-
-        self.lst = QListWidget(); self.lst.setVisible(False); self.lst.setMaximumHeight(160)
-        self.lst.setStyleSheet(f"""
-            QListWidget{{background:{WHITE};color:{DARK_CARD};
-            border:1.5px solid {AMBER};border-radius:0 0 7px 7px;border-top:none;font-size:12px;}}
-            QListWidget::item{{padding:7px 12px;border-bottom:1px solid {BORDER_LIGHT};}}
-            QListWidget::item:selected{{background:{AMBER};color:white;}}
-            QListWidget::item:hover{{background:{AMBER_LIGHTEST};}}
-        """)
-        self.lst.itemClicked.connect(self._on_click)
-        self.lst.installEventFilter(self)
-        lay.addWidget(self.inp); lay.addWidget(self.lst)
-
-    def set_products(self, products):
-        self._all_products = products
-
-    def set_selection(self, pid, display):
-        self._selected_pid = pid
-        self.inp.blockSignals(True); self.inp.setText(display); self.inp.blockSignals(False)
-        self.lst.setVisible(False)
-
-    def clear_selection(self):
-        self._selected_pid = None
-        self.inp.blockSignals(True); self.inp.clear(); self.inp.blockSignals(False)
-        self.lst.setVisible(False)
-
-    def currentData(self): return self._selected_pid
-
-    def _on_text(self, text):
-        self._selected_pid = None; q = text.strip().lower()
-        if not q: self.lst.setVisible(False); return
-        matches = [(pid,name,price) for pid,name,price in self._all_products if q in name.lower()][:10]
-        self.lst.clear()
-        if matches:
-            for pid, name, price in matches:
-                item = QListWidgetItem(f"{name}  —  {format_currency(price)}")
-                item.setData(Qt.ItemDataRole.UserRole, (pid, f"{name}  ({format_currency(price)})"))
-                self.lst.addItem(item)
-        else:
-            no = QListWidgetItem("  No products found"); no.setForeground(QColor(MUTED))
-            no.setFlags(no.flags() & ~Qt.ItemFlag.ItemIsSelectable); self.lst.addItem(no)
-        self.lst.setVisible(True)
-
-    def _on_click(self, item):
-        data = item.data(Qt.ItemDataRole.UserRole)
-        if not data: return
-        pid, display = data; self._selected_pid = pid
-        self.inp.blockSignals(True); self.inp.setText(display); self.inp.blockSignals(False)
-        self.lst.setVisible(False)
-
-    def eventFilter(self, obj, event):
-        if obj is self.inp and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Down and self.lst.isVisible():
-                self.lst.setCurrentRow(0); self.lst.setFocus(); return True
-            if event.key() == Qt.Key.Key_Escape:
-                self.lst.setVisible(False); return True
-        if obj is self.lst and event.type() == QEvent.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                cur = self.lst.currentItem()
-                if cur: self._on_click(cur); return True
-            if event.key() == Qt.Key.Key_Up and self.lst.currentRow()==0:
-                self.inp.setFocus(); return True
-        return super().eventFilter(obj, event)
 
 
 # ================================================================
@@ -1125,37 +1034,46 @@ class ManagerWindow(SupervisorWindow):
         self._load_products(self.product_search.text())
 
     def _build_quickkeys_tab(self):
+        from ui.shared.searchable_product_combo import SearchableProductCombo
         w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
         lay = QVBoxLayout(w); lay.setContentsMargins(20,20,20,20); lay.setSpacing(10)
-        hint = QLabel("Assign a product to each F-key (F1–F8). Start typing a product name to search — select from the results.")
+        hint = QLabel("Assign a product to each F-key (F1–F8). Type a product name or barcode to search — select from the results.")
         hint.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;"); lay.addWidget(hint)
 
-        all_prods = [(p["id"], p["name"], p["effective_selling_price"]) for p in get_products(limit=5000)]
         self._qk_widgets = []
         for k in get_quick_keys():
             row = QHBoxLayout(); row.setSpacing(10)
             badge = QLabel(f"F{k['slot']}"); badge.setFixedSize(40,32)
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             badge.setStyleSheet(f"background:{DARK_CARD};color:{AMBER};border-radius:6px;font-size:11px;font-weight:700;")
-            sw = ProductSearchWidget(); sw.set_products(all_prods)
-            if k.get("product_id") and k.get("product_name"):
-                sw.set_selection(k["product_id"], f"{k['product_name']}  ({format_currency(k['product_price'])})")
+            # Same picker the Supervisor dashboard's Quick Keys tab now uses
+            # (previously this file had its own separate ProductSearchWidget
+            # that only filtered by name, client-side, over a fixed snapshot
+            # of up to 5000 products — inconsistent with every other search
+            # bar in the app, which search barcode too). Sharing one widget
+            # means both dashboards behave identically here going forward.
+            sw = SearchableProductCombo(
+                none_label="— No product assigned —", show_price=True,
+                price_field="effective_selling_price",
+                exclude_cases=False, exclude_variant_members=False,
+            )
+            if k.get("product_id"):
+                sw.set_value(k["product_id"])
             sw.setProperty("slot", k["slot"])
             row.addWidget(badge); row.addWidget(sw, stretch=1)
             lay.addLayout(row); self._qk_widgets.append(sw)
 
         lay.addStretch()
         save_btn = QPushButton("💾  Save Quick Keys"); save_btn.setFixedHeight(42)
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(self._accent_btn()); save_btn.clicked.connect(self._qk_save_manager)
         lay.addWidget(save_btn); return w
 
     def _qk_save_manager(self):
-        assignments = []
-        for sw in self._qk_widgets:
-            slot = sw.property("slot"); pid = sw.currentData()
-            # Only slot + product_id are stored — name/price are resolved
-            # live from products.db on every read, never snapshotted here.
-            assignments.append({"slot": slot, "product_id": pid})
+        assignments = [
+            {"slot": sw.property("slot"), "product_id": sw.selected_id()}
+            for sw in self._qk_widgets
+        ]
         save_quick_keys(assignments)
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
