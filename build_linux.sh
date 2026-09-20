@@ -234,7 +234,7 @@ fi
 
 cat > "$BUILD_DIR/MerchantPOS_linux.spec" << SPEC
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 import sys
 
 datas    = []
@@ -246,6 +246,14 @@ qt_d, qt_b, qt_i = collect_all('PyQt6')
 datas        += qt_d
 binaries     += qt_b
 hiddenimports += qt_i
+
+# python-escpos ships escpos/capabilities.json as PACKAGE DATA, not a
+# Python module — 'escpos'/'escpos.printer' in hiddenimports only covers
+# the code. Without this, the frozen build fails as soon as ESC/POS
+# commands (Raw Text mode) are used, since that's the only path that
+# actually instantiates escpos.printer.Printer. See build_windows.sh for
+# the matching fix and full explanation.
+datas += collect_data_files('escpos')
 
 # Collect all project submodules
 for pkg in ['core', 'ui', 'utils']:
