@@ -196,7 +196,7 @@ DATA_WIN=$(winepath -w "$SCRIPT_DIR/data"   2>/dev/null || echo "Z:${SCRIPT_DIR/
 
 cat > "$BUILD_DIR/MerchantPOS.spec" << SPEC
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 datas    = []
 binaries = []
@@ -207,6 +207,17 @@ qt_d, qt_b, qt_i = collect_all('PyQt6')
 datas     += qt_d
 binaries  += qt_b
 hiddenimports += qt_i
+
+# python-escpos ships escpos/capabilities.json (printer-profile lookup
+# data — paper width, supported commands, etc. per model) as PACKAGE DATA,
+# not a Python module. 'escpos'/'escpos.printer' in hiddenimports below
+# only tells PyInstaller about the code; it has no way to know about this
+# JSON file unless told explicitly, same as PyQt6's own data above. Without
+# this line the built EXE fails with "[Errno 2] No such file or directory:
+# '...\\_internal\\escpos\\capabilities.json'" the moment ESC/POS commands
+# (Raw Text mode) are used, since that's the only path that actually
+# instantiates escpos.printer.Printer.
+datas += collect_data_files('escpos')
 
 # Collect all project submodules
 for pkg in ['core', 'ui', 'utils']:
