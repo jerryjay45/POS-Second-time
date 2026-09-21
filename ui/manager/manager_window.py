@@ -622,7 +622,9 @@ class ManagerWindow(SupervisorWindow):
         self.ps_copies.setStyleSheet(f"QSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};border-radius:7px;padding:0 10px;font-size:13px;}}QSpinBox:focus{{border-color:{AMBER};}}")
 
         # ── ESC/POS ───────────────────────────────────────────────────
-        self.ps_escpos = make_checkbox("Send real ESC/POS commands (bold headers/totals, real paper cut)")
+        self.ps_escpos = make_checkbox("Send real ESC/POS commands (bold headers/totals)")
+        self.ps_has_cutter = make_checkbox("Printer has an automatic paper cutter")
+        self.ps_has_cutter.setChecked(True)
         self.ps_cash_drawer = make_checkbox("Open cash drawer on cash/split-tender sales")
 
         escpos_box = QFrame()
@@ -632,12 +634,18 @@ class ManagerWindow(SupervisorWindow):
         eb_lbl.setStyleSheet(f"color:{DARK_CARD};font-size:12px;font-weight:600;")
         eb.addWidget(eb_lbl)
         eb.addWidget(self.ps_escpos)
+        eb.addWidget(self.ps_has_cutter)
         eb.addWidget(self.ps_cash_drawer)
         eb_hint = QLabel(
             "Raw Text mode only. Needs a printer whose firmware understands ESC/POS "
             "(e.g. TM-U220) — it degrades to plain text automatically if the "
-            "python-escpos library isn't installed. The drawer must be wired "
-            "through the receipt printer for the kick to work."
+            "python-escpos library isn't installed or can't initialize. Uncheck "
+            "\"automatic paper cutter\" for cutter-less printers like the TM-U220 "
+            "— sending a cut command to a printer that can't cut risks garbled "
+            "trailing output. The cash drawer must be wired through the receipt "
+            "printer to open, and works in either Raw Text or Raster mode — it's "
+            "sent as its own short command independent of how the receipt itself "
+            "prints."
         )
         eb_hint.setStyleSheet(f"color:{MUTED};font-size:10px;"); eb_hint.setWordWrap(True)
         eb.addWidget(eb_hint)
@@ -645,7 +653,12 @@ class ManagerWindow(SupervisorWindow):
         def _sync_escpos_enabled():
             raw = self.ps_mode_combo.currentData() != "raster"
             self.ps_escpos.setEnabled(raw)
-            self.ps_cash_drawer.setEnabled(raw and self.ps_escpos.isChecked())
+            self.ps_has_cutter.setEnabled(raw and self.ps_escpos.isChecked())
+            # Cash drawer kick is a standalone raw command sent alongside the
+            # receipt, not part of the receipt's own formatting/rendering —
+            # it works the same regardless of print mode or the ESC/POS
+            # text-formatting setting above, so it's never gated on either.
+            self.ps_cash_drawer.setEnabled(True)
         self.ps_mode_combo.currentIndexChanged.connect(_sync_escpos_enabled)
         self.ps_escpos.toggled.connect(_sync_escpos_enabled)
         self._sync_escpos_enabled = _sync_escpos_enabled
@@ -753,6 +766,7 @@ class ManagerWindow(SupervisorWindow):
         self._printers_select_width(saved_width)
 
         self.ps_escpos.setChecked(get("receipt_printer_escpos", "0").strip() == "1")
+        self.ps_has_cutter.setChecked(get("receipt_printer_has_cutter", "1").strip() == "1")
         self.ps_cash_drawer.setChecked(get("cash_drawer_kick_on_cash_sale", "0").strip() == "1")
         self._sync_escpos_enabled()
 
@@ -766,6 +780,7 @@ class ManagerWindow(SupervisorWindow):
                 "label_printer_name":     self.ps_label.text().strip(),
                 "receipt_copies":         str(self.ps_copies.value()),
                 "receipt_printer_escpos": "1" if self.ps_escpos.isChecked() else "0",
+                "receipt_printer_has_cutter": "1" if self.ps_has_cutter.isChecked() else "0",
                 "cash_drawer_kick_on_cash_sale": "1" if self.ps_cash_drawer.isChecked() else "0",
             })
             self.printers_feedback.setText("✓  Printer settings saved.")
@@ -783,7 +798,8 @@ class ManagerWindow(SupervisorWindow):
         mode = self.ps_mode_combo.currentData()
         width = self.ps_width_combo.currentData() or 76
         use_escpos = mode != "raster" and self.ps_escpos.isChecked()
-        kick_drawer = use_escpos and self.ps_cash_drawer.isChecked()
+        has_cutter = self.ps_has_cutter.isChecked()
+        kick_drawer = self.ps_cash_drawer.isChecked()
         from utils.printer_capabilities import columns_for_width_mm
         cols = columns_for_width_mm(width)
         self.printers_feedback.setText("Sending test print…")
@@ -798,7 +814,8 @@ class ManagerWindow(SupervisorWindow):
             ("Printer connected successfully", "normal"),
             (f"Printer: {name or 'OS Default'}", "normal"),
             (f"Mode: {'Raw Text' if mode != 'raster' else 'Raster'}", "normal"),
-            (f"ESC/POS: {'On' if use_escpos else 'Off'}", "normal"),
+            (f"ESC/POS: {'On' if use_escpos else 'Off'}"
+             + (f" (cutter: {'yes' if has_cutter else 'no'})" if use_escpos else ""), "normal"),
             (f"Width: {width}mm ({cols} cols)", "normal"),
             (div, "div"),
         ]
@@ -808,13 +825,20 @@ class ManagerWindow(SupervisorWindow):
             data = None
             if use_escpos:
                 from utils.escpos_builder import build_escpos_bytes
-                data = build_escpos_bytes(lines, cut=True, cash_drawer=kick_drawer)
+                data = build_escpos_bytes(lines, cut=has_cutter)
+            drawer_note = ""
             with printer as p:
                 if data is not None:
                     p.print_bytes(data)
                 else:
                     p.print_text(test_text)
-            self.printers_feedback.setText("✓  Test print sent successfully.")
+                if kick_drawer:
+                    try:
+                        p.kick_drawer()
+                        drawer_note = "  Drawer kick sent."
+                    except Exception as e:
+                        drawer_note = f"  Drawer kick failed: {str(e).splitlines()[0]}"
+            self.printers_feedback.setText(f"✓  Test print sent successfully.{drawer_note}")
             self.printers_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
         except PrinterError as e:
             self.printers_feedback.setText(f"✗  {str(e).splitlines()[0]}")
