@@ -76,6 +76,16 @@ class SupervisorWindow(BaseWindow):
         # under the 4.5:1 floor for this normal-sized text. Same failure
         # already found and fixed in cashier_window.py's topbar clock.
         self._clock.setStyleSheet("color:#9a9690;font-size:11px;font-family:'DM Mono',monospace;")
+        drawer_btn = QPushButton("🔓  Open Drawer"); drawer_btn.setFixedHeight(30)
+        drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        drawer_btn.setStyleSheet(f"""
+            QPushButton{{background:transparent;color:{AMBER};
+            border:1px solid {AMBER};border-radius:15px;font-size:11px;
+            font-weight:600;padding:0 14px;}}
+            QPushButton:hover{{background:{AMBER};color:{DARK};}}
+        """)
+        drawer_btn.clicked.connect(self._open_drawer_manual)
+
         logout = QPushButton("Logout  ↗"); logout.setFixedHeight(30)
         logout.setCursor(Qt.CursorShape.PointingHandCursor)
         # White text on amber measured ~2.2:1 — same failure pattern
@@ -88,8 +98,18 @@ class SupervisorWindow(BaseWindow):
         logout.clicked.connect(self._handle_logout)
         lay.addWidget(left); lay.addStretch()
         lay.addWidget(self._clock); lay.addStretch()
-        lay.addWidget(logout)
+        lay.addWidget(drawer_btn); lay.addSpacing(10); lay.addWidget(logout)
         return bar
+
+    def _open_drawer_manual(self):
+        """Open Drawer button — a no-sale drawer open, always supervisor/
+        manager authorised (independent of print mode — see
+        utils.thermal_printer.ThermalPrinter.kick_drawer)."""
+        from ui.shared.drawer_auth_dialog import DrawerAuthDialog
+        dlg = DrawerAuthDialog(parent=self)
+        if dlg.exec():
+            from utils.print_manager import open_drawer_manual
+            open_drawer_manual(dlg.authorized_user, parent=self)
 
     def _build_tabs(self):
         self.tabs = QTabWidget()
