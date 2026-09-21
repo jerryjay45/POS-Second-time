@@ -17,8 +17,12 @@ Auto-print (receipt, reprint):
   Uses ThermalPrinter (raw passthrough or raster, per receipt_printer_mode)
   → configured receipt printer or OS default. No dialog shown.
   In raw mode, if receipt_printer_escpos is enabled, sends real ESC/POS
-  commands (bold headers/totals, paper cut, optional cash-drawer kick)
-  via utils.escpos_builder instead of plain ASCII text.
+  commands (bold headers/totals, paper cut if receipt_printer_has_cutter
+  is set) via utils.escpos_builder instead of plain ASCII text.
+  A cash-drawer kick, when requested, is always sent as its own short
+  raw job straight to the printer queue — independent of print mode or
+  the ESC/POS text setting, since the pulse doesn't depend on how the
+  receipt itself was rendered.
 
 Dialog-print (void, refund, session):
   Raw mode:    sends raw text/ESC-POS straight to the configured receipt
@@ -110,8 +114,13 @@ def _auto_print(text: str, parent=None, lines: list | None = None,
                    ESC/POS byte stream instead of plain text. Falls
                    back to plain text if python-escpos isn't installed
                    or lines wasn't provided.
-    cash_drawer  — send a cash-drawer-open pulse (ESC/POS mode only).
-                   Only ever pass True for a completed sale receipt.
+    cash_drawer  — send a cash-drawer-open pulse. Fired as its own tiny
+                   raw job, independent of print mode or the ESC/POS
+                   text setting — a raster-mode receipt still renders
+                   as a normal document, but the drawer still opens via
+                   a short separate raw send to the same printer.
+                   Best-effort: a failed kick never fails the receipt
+                   print. Only ever pass True for a completed sale.
     """
     from core.db_config import get as cfg_get
     from utils.thermal_printer import ThermalPrinter, PrinterError
@@ -119,17 +128,24 @@ def _auto_print(text: str, parent=None, lines: list | None = None,
     mode        = cfg_get("receipt_printer_mode", "raw").strip()
     use_escpos  = (mode == "raw" and lines is not None
                   and cfg_get("receipt_printer_escpos", "0").strip() == "1")
+    has_cutter  = cfg_get("receipt_printer_has_cutter", "1").strip() == "1"
 
     try:
         with ThermalPrinter.from_config() as p:
             data = None
             if use_escpos:
                 from utils.escpos_builder import build_escpos_bytes
-                data = build_escpos_bytes(lines, cut=True, cash_drawer=cash_drawer)
+                data = build_escpos_bytes(lines, cut=has_cutter)
             if data is not None:
                 p.print_bytes(data)
             else:
                 p.print_text(text)
+
+            if cash_drawer:
+                try:
+                    p.kick_drawer()
+                except Exception as e:
+                    print(f"[PrintManager] Drawer kick failed (receipt still printed): {e}")
         return True
     except PrinterError as e:
         print(f"[PrintManager] Auto-print error: {e}")
