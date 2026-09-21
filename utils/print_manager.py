@@ -371,6 +371,52 @@ def reprint_receipt(receipt_number: str, parent=None) -> bool:
         return False
 
 
+def open_drawer_manual(authorized_by: dict, parent=None) -> bool:
+    """
+    Open the cash drawer with no sale attached — used by the "Open
+    Drawer" button on the cashier/supervisor/manager dashboards. The
+    caller is responsible for authorising this first (see
+    ui.shared.drawer_auth_dialog.DrawerAuthDialog); this function only
+    fires the pulse and records who authorised it.
+
+    Appends one line to receipts/_drawer_log.txt — a lightweight,
+    append-only record (who, when) for accountability, since a no-sale
+    drawer open leaves no receipt trail otherwise. Never raises.
+    """
+    from utils.thermal_printer import ThermalPrinter, PrinterError
+
+    try:
+        with ThermalPrinter.from_config() as p:
+            p.kick_drawer()
+        _log_drawer_open(authorized_by)
+        return True
+    except PrinterError as e:
+        print(f"[PrintManager] Manual drawer open failed: {e}")
+        if parent:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(parent, "Drawer Error", str(e))
+        return False
+    except Exception as e:
+        print(f"[PrintManager] Unexpected drawer error: {e}")
+        return False
+
+
+def _log_drawer_open(authorized_by: dict):
+    """Append a timestamped line to the manual-drawer-open audit log."""
+    try:
+        line = (
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  "
+            f"Manual drawer open — authorised by "
+            f"{authorized_by.get('full_name', 'Unknown')} "
+            f"({authorized_by.get('role', 'unknown role')})\n"
+        )
+        os.makedirs(RECEIPT_DIR, exist_ok=True)
+        with open(os.path.join(RECEIPT_DIR, "_drawer_log.txt"), "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        print(f"[PrintManager] Could not write drawer log: {e}")
+
+
 def print_label(product: dict, copies: int = 1,
                 printer_name: str = "", parent=None) -> bool:
     """Stub — label printing handled by price tag tab UI."""
