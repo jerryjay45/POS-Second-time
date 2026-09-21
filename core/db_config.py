@@ -83,7 +83,8 @@ _DEFAULTS = {
     "receipt_copies":         "1",
     "label_printer_name":     "",
     "receipt_printer_escpos": "0",         # "1" = send real ESC/POS commands (bold headers/totals, paper cut) instead of plain ASCII — raw mode only, needs an ESC/POS-capable printer
-    "cash_drawer_kick_on_cash_sale": "0",  # "1" = send the cash-drawer-open command after printing a cash/split-tender sale receipt — ESC/POS mode only
+    "receipt_printer_has_cutter": "1",     # "1" = printer has an automatic cutter, safe to send the cut command in ESC/POS mode. "0" for cutter-less printers (e.g. dot matrix TM-U220) — sending cut to a printer that can't cut risks garbled trailing output
+    "cash_drawer_kick_on_cash_sale": "0",  # "1" = send the cash-drawer-open pulse after a cash/split-tender sale. Sent as its own short raw job regardless of print mode — works with raw or raster receipts, as long as the drawer is wired through the receipt printer
 
     # PostgreSQL external DB (mirrors config.py but persisted here)
     "pg_enabled":            "0",
