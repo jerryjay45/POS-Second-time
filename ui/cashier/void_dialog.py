@@ -29,7 +29,7 @@ from ui.shared.theme import (
     RED, RED_LIGHT, RED_BORDER, GREEN,
     symbol_font,
 )
-from core.db_users import get_users, authenticate
+from core.db_users import authenticate_supervisor_or_above
 
 # AMBER_DARK (#BA7517) as text on white measured ~3.7:1 for the item
 # table's price cells — under the 4.5:1 floor for this small text.
@@ -384,14 +384,5 @@ class VoidDialog(QDialog):
         ))
 
     def _check_supervisor_password(self, password: str) -> dict | None:
-        """
-        Check if the password belongs to an active supervisor or manager.
-        Returns the user dict or None.
-        """
-        users = get_users(role="supervisor") + get_users(role="manager")
-        for u in users:
-            if not u.get("is_active"): continue
-            result = authenticate(u["username"], password)
-            if result and result["id"] == u["id"]:
-                return result
-        return None
+        """Check if the password belongs to an active supervisor or manager."""
+        return authenticate_supervisor_or_above(password)
