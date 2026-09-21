@@ -93,6 +93,22 @@ class ThermalPrinter:
         """No-op — paper cut is handled by the printer driver/form feed."""
         return self
 
+    def kick_drawer(self, pin: int = 2) -> "ThermalPrinter":
+        """
+        Fire the cash-drawer-open pulse as its own tiny raw job, straight
+        to the OS spooler — independent of print mode. A raster-mode
+        receipt still renders as a normal document (the pulse can't be
+        embedded in that), but the drawer itself is opened by this
+        separate, short raw byte send to the same printer queue, exactly
+        like the ESC/POS-formatted raw text path already uses.
+
+        Sent once regardless of the configured copy count — kicking the
+        drawer twice per sale would be a bug, not a feature.
+        """
+        from utils.escpos_builder import drawer_kick_bytes
+        self._send_raw(drawer_kick_bytes(pin))
+        return self
+
     # ── Properties ────────────────────────────────────────────────────
 
     @property
