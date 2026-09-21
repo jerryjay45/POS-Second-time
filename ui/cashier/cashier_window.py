@@ -464,10 +464,17 @@ class CashierWindow(BaseWindow):
         """)
         remove_btn.clicked.connect(self._handle_void)
 
+        drawer_btn = QPushButton("🔓  Open Drawer")
+        drawer_btn.setFixedHeight(36)
+        drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        drawer_btn.setStyleSheet(self._pill_btn_style())
+        drawer_btn.clicked.connect(self._open_drawer_manual)
+
         bw_lay.addWidget(clear_btn)
         bw_lay.addWidget(misc_btn)
         bw_lay.addWidget(price_btn)
         bw_lay.addWidget(remove_btn)
+        bw_lay.addWidget(drawer_btn)
         lay.addWidget(btn_wrap)
         # Reprint/last-change now display below the action buttons — see
         # the comments above _reprint_btn/_change_frame's construction for
@@ -1141,6 +1148,16 @@ class CashierWindow(BaseWindow):
             for it in dlg.voided_items:
                 if it in self.cart: self.cart.remove(it)
             self._refresh_table(); self._update_totals()
+
+    def _open_drawer_manual(self):
+        """Open Drawer button — a no-sale drawer open, always supervisor/
+        manager authorised (unlike Remove Items, this isn't gated by a
+        setting — it leaves no receipt trail, so it's always gated)."""
+        from ui.shared.drawer_auth_dialog import DrawerAuthDialog
+        dlg = DrawerAuthDialog(parent=self)
+        if dlg.exec():
+            from utils.print_manager import open_drawer_manual
+            open_drawer_manual(dlg.authorized_user, parent=self)
 
     def _handle_checkout(self):
         if not self.cart: return
