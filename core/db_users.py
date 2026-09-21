@@ -117,6 +117,26 @@ def authenticate(username: str, password: str) -> dict | None:
     return None
 
 
+def authenticate_supervisor_or_above(password: str) -> dict | None:
+    """
+    Check a password against every active supervisor or manager account
+    and return the matching user dict, or None if it matches none of
+    them. Used for re-authorising a sensitive action (void/refund, a
+    manual drawer open) with just a password, without knowing in advance
+    which supervisor/manager is present at the terminal.
+
+    Same check used by ui/cashier/void_dialog.py's require_auth path —
+    factored out here so new call sites don't duplicate the loop.
+    """
+    for u in get_users(role="supervisor") + get_users(role="manager"):
+        if not u.get("is_active"):
+            continue
+        result = authenticate(u["username"], password)
+        if result and result["id"] == u["id"]:
+            return result
+    return None
+
+
 # ── Users CRUD ────────────────────────────────────────────────────────────────
 
 def get_users(search: str = "", role: str = "") -> list[dict]:
