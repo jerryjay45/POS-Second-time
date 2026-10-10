@@ -48,6 +48,9 @@ def _conn():
         _local.conn = sqlite3.connect(DB_PRODUCTS, check_same_thread=False)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL is safe in WAL mode (no corruption; at worst the last commit is lost on
+        # power cut) and avoids a forced disk sync on every commit — a big win on HDDs.
+        _local.conn.execute("PRAGMA synchronous=NORMAL")
         _local.conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield _local.conn
@@ -166,11 +169,93 @@ CREATE INDEX IF NOT EXISTS idx_stock_adj_variant     ON stock_adjustments(varian
 """
 
 
+# ── Fast product search (FTS5 trigram) ──────────────────────────────────────
+# `LOWER(name) LIKE '%term%'` can't use an index, so every search scanned the
+# whole products table (~80 ms at 40k products on a fast PC, much worse on old
+# hardware). A trigram FTS5 index answers the same substring question from an
+# index instead. It is an *external-content* table (stores no copy of the text)
+# kept in sync by triggers, so every code path that writes to `products`
+# (UI edits, DBF import, deletes) updates it with no app-code changes.
+# Needs SQLite >= 3.34; if unavailable everything silently falls back to LIKE.
+
+_FTS_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+    barcode, name, content='products', content_rowid='id', tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS products_fts_ai AFTER INSERT ON products BEGIN
+    INSERT INTO products_fts(rowid, barcode, name) VALUES (new.id, new.barcode, new.name);
+END;
+CREATE TRIGGER IF NOT EXISTS products_fts_ad AFTER DELETE ON products BEGIN
+    INSERT INTO products_fts(products_fts, rowid, barcode, name)
+    VALUES ('delete', old.id, old.barcode, old.name);
+END;
+CREATE TRIGGER IF NOT EXISTS products_fts_au AFTER UPDATE OF barcode, name ON products BEGIN
+    INSERT INTO products_fts(products_fts, rowid, barcode, name)
+    VALUES ('delete', old.id, old.barcode, old.name);
+    INSERT INTO products_fts(rowid, barcode, name) VALUES (new.id, new.barcode, new.name);
+END;
+"""
+
+
+def _setup_fts(con) -> bool:
+    """Create the FTS index + triggers if possible. Returns True if usable."""
+    try:
+        existed = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'products_fts'"
+        ).fetchone() is not None
+        con.executescript(_FTS_SQL)
+        if not existed:
+            # First time on an existing database: index the rows already there.
+            con.execute("INSERT INTO products_fts(products_fts) VALUES ('rebuild')")
+        con.commit()
+        return True
+    except sqlite3.Error:
+        return False   # old SQLite without trigram support -> LIKE fallback
+
+
+def _fts_available(con) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'products_fts'"
+    ).fetchone() is not None
+
+
+def _like_literal(text: str) -> str:
+    """Escape LIKE wildcards so typed '%' / '_' match literally (the FTS path
+    is literal, and the two paths must agree)."""
+    return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _search_clause(con, search: str) -> tuple[str, list]:
+    """SQL fragment (starting with ' AND ') + params matching `search` against
+    barcode, product name, alias-group name and variant-group name as a
+    case-insensitive literal substring."""
+    text = search.lower()
+    like = _like_literal(text)
+    if len(text) >= 3 and _fts_available(con):
+        phrase = '"' + text.replace('"', '""') + '"'
+        return ("""
+            AND p.id IN (
+                SELECT rowid FROM products_fts WHERE products_fts MATCH ?
+                UNION
+                SELECT id FROM products WHERE alias_group_id IN
+                    (SELECT id FROM alias_groups WHERE LOWER(name) LIKE ? ESCAPE '\\')
+                UNION
+                SELECT id FROM products WHERE variant_group_id IN
+                    (SELECT id FROM variant_groups WHERE LOWER(name) LIKE ? ESCAPE '\\')
+            )""", [phrase, like, like])
+    # Short queries (trigram needs 3+ chars) or no FTS: LIKE scan.
+    return ("""
+            AND (LOWER(p.barcode) LIKE ? ESCAPE '\\' OR LOWER(p.name) LIKE ? ESCAPE '\\'
+                 OR LOWER(ag.name)   LIKE ? ESCAPE '\\' OR LOWER(vg.name) LIKE ? ESCAPE '\\')""",
+            [like, like, like, like])
+
+
 def init_db():
     """Create all tables (idempotent)."""
     with _conn() as con:
         con.executescript(SCHEMA)
         con.commit()
+        _setup_fts(con)
 
 
 # ── Groups (margin) ─────────────────────────────────────────────────────────
@@ -537,17 +622,16 @@ def get_products(search: str = "", group_id: int = None,
     params: list = []
     if exclude_cases:
         q += " AND p.is_case = 0"
-    if search:
-        q += """ AND (LOWER(p.barcode) LIKE ? OR LOWER(p.name) LIKE ?
-                   OR LOWER(ag.name)   LIKE ? OR LOWER(vg.name) LIKE ?)"""
-        s = f"%{search.lower()}%"
-        params += [s, s, s, s]
-    if group_id is not None:
-        q += " AND p.group_id = ?"
-        params.append(group_id)
-    q += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
-    params += [limit, offset]
     with _conn() as con:
+        if search:
+            frag, sp = _search_clause(con, search)
+            q += frag
+            params += sp
+        if group_id is not None:
+            q += " AND p.group_id = ?"
+            params.append(group_id)
+        q += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
+        params += [limit, offset]
         return [dict(r) for r in con.execute(q, params)]
 
 
@@ -632,15 +716,14 @@ def count_products(search: str = "", group_id: int = None,
     params: list = []
     if exclude_cases:
         q += " AND p.is_case = 0"
-    if search:
-        q += """ AND (LOWER(p.barcode) LIKE ? OR LOWER(p.name) LIKE ?
-                   OR LOWER(ag.name)   LIKE ? OR LOWER(vg.name) LIKE ?)"""
-        s = f"%{search.lower()}%"
-        params += [s, s, s, s]
-    if group_id is not None:
-        q += " AND p.group_id = ?"
-        params.append(group_id)
     with _conn() as con:
+        if search:
+            frag, sp = _search_clause(con, search)
+            q += frag
+            params += sp
+        if group_id is not None:
+            q += " AND p.group_id = ?"
+            params.append(group_id)
         return con.execute(q, params).fetchone()[0]
 
 

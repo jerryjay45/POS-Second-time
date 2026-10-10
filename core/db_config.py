@@ -28,6 +28,9 @@ def _conn():
         _local.conn = sqlite3.connect(DB_CONFIG, check_same_thread=False)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL is safe in WAL mode (no corruption; at worst the last commit is lost on
+        # power cut) and avoids a forced disk sync on every commit — a big win on HDDs.
+        _local.conn.execute("PRAGMA synchronous=NORMAL")
     try:
         yield _local.conn
     except Exception:

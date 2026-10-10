@@ -48,6 +48,9 @@ def _conn():
         _local.conn = sqlite3.connect(DB_CHECKOUT, check_same_thread=False)
         _local.conn.row_factory = sqlite3.Row
         _local.conn.execute("PRAGMA journal_mode=WAL")
+        # Deliberately NOT synchronous=NORMAL here: this file holds the sales record, and
+        # NORMAL can lose the last committed sale on a power cut (the receipt would already
+        # be printed). The default FULL costs one disk sync per sale, which is acceptable.
         _local.conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield _local.conn
@@ -244,8 +247,10 @@ def count_receipts(
     if status:                 q += " AND status = ?";        params.append(status)
     if search:
         q += " AND receipt_number LIKE ?";                    params.append(f"%{search}%")
-    if date_from: q += " AND date(created_at) >= ?";         params.append(date_from)
-    if date_to:   q += " AND date(created_at) <= ?";         params.append(date_to)
+    # Plain range comparisons on created_at (not date(created_at)) so the
+    # idx_receipts_date index can be used instead of scanning every receipt.
+    if date_from: q += " AND created_at >= ?";                params.append(date_from)
+    if date_to:   q += " AND created_at < date(?, '+1 day')";  params.append(date_to)
     with _conn() as con:
         return con.execute(q, params).fetchone()[0]
 
@@ -263,8 +268,10 @@ def get_receipts(
     if search:
         q += " AND receipt_number LIKE ?"
         params.append(f"%{search}%")
-    if date_from: q += " AND date(created_at) >= ?";             params.append(date_from)
-    if date_to:   q += " AND date(created_at) <= ?";             params.append(date_to)
+    # Plain range comparisons on created_at (not date(created_at)) so the
+    # idx_receipts_date index can be used instead of scanning every receipt.
+    if date_from: q += " AND created_at >= ?";                params.append(date_from)
+    if date_to:   q += " AND created_at < date(?, '+1 day')";  params.append(date_to)
     q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
     params += [limit, offset]
     with _conn() as con:
