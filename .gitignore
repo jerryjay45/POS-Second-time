@@ -8,3 +8,4 @@ build_win/
 dist/
 labels/
 receipts/
+build/
