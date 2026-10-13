@@ -617,7 +617,12 @@ _PRODUCT_SELECT = """
 
 def get_products(search: str = "", group_id: int = None,
                  limit: int = 100, offset: int = 0,
-                 exclude_cases: bool = False) -> list[dict]:
+                 exclude_cases: bool = False,
+                 relevance: bool = False) -> list[dict]:
+    """relevance=True (only meaningful with `search`): products whose NAME
+    STARTS WITH the search text come first, then the rest; each group is
+    alphabetical. Default False keeps plain alphabetical order, so only
+    callers that opt in (the cashier search) see different ordering."""
     q = _PRODUCT_SELECT + " WHERE 1=1"
     params: list = []
     if exclude_cases:
@@ -630,7 +635,12 @@ def get_products(search: str = "", group_id: int = None,
         if group_id is not None:
             q += " AND p.group_id = ?"
             params.append(group_id)
-        q += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
+        if search and relevance:
+            q += (" ORDER BY CASE WHEN LOWER(p.name) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,"
+                  " p.name COLLATE NOCASE LIMIT ? OFFSET ?")
+            params.append(_like_literal(search.lower())[1:])   # 'text%' = starts-with
+        else:
+            q += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
         params += [limit, offset]
         return [dict(r) for r in con.execute(q, params)]
 

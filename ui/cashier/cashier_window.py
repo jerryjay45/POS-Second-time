@@ -47,6 +47,15 @@ AMBER_TABLE_TEXT = "#8a5510"
 class CashierWindow(BaseWindow):
     logout_requested = pyqtSignal()
 
+    # Max products listed after a text search. Anything beyond this is cut off
+    # and the cashier is told with the warning banner below.
+    _SEARCH_LIMIT = 31
+    # Fixed colours (not theme colours) so the warning looks the same, and stays
+    # clearly different from the normal grey count, whatever theme is active.
+    _MATCH_LBL_WARN = ("background:#FFF3CD;color:#7A4B00;border:1px solid #E0A800;"
+                       "border-radius:6px;font-size:12px;font-weight:bold;"
+                       "padding:5px 8px;margin:2px 0 2px 0;")
+
     def __init__(self, user: dict, parent=None):
         super().__init__(parent)
         self.user          = user
@@ -256,7 +265,9 @@ class CashierWindow(BaseWindow):
 
         # Match-count label (styled like the price tag tab's search feedback)
         self.match_lbl = QLabel("")
-        self.match_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;padding:2px 4px 0 4px;")
+        self._MATCH_LBL_NORMAL = f"color:{MUTED};font-size:11px;padding:2px 4px 0 4px;"
+        self.match_lbl.setStyleSheet(self._MATCH_LBL_NORMAL)
+        self.match_lbl.setWordWrap(True)
         self.match_lbl.setVisible(False)
         lay.addWidget(self.match_lbl)
 
@@ -654,8 +665,12 @@ class CashierWindow(BaseWindow):
             self._add_to_cart(p, qty)
             self._clear_search(); return
 
-        # Full-text search
-        results = get_products(search=text, limit=20)
+        # Full-text search. Ask for one more row than we show so we can tell
+        # the cashier when there are more matches than fit ("31+").
+        results = get_products(search=text, limit=self._SEARCH_LIMIT + 1,
+                               relevance=True)
+        overflow = len(results) > self._SEARCH_LIMIT
+        results  = results[:self._SEARCH_LIMIT]
         if len(results) == 1:
             self._add_to_cart(results[0], qty)
             self._clear_search()
@@ -663,7 +678,7 @@ class CashierWindow(BaseWindow):
             self._flash_not_found()
             self.search_input.clear()
         else:
-            self._show_results(results)
+            self._show_results(results, overflow)
 
     def _flash_not_found(self):
         """Flash the search bar red briefly when product not found."""
@@ -680,7 +695,7 @@ class CashierWindow(BaseWindow):
             self.search_input.setPlaceholderText("Scan or search products  ·  ↵ on empty = Checkout")
         QTimer.singleShot(1200, _restore)
 
-    def _show_results(self, results):
+    def _show_results(self, results, overflow: bool = False):
         self.results_list.clear()
         q = self._clean_barcode(self.search_input.text())
         if not results:
@@ -689,6 +704,7 @@ class CashierWindow(BaseWindow):
             item.setForeground(QColor(MUTED))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             self.results_list.addItem(item)
+            self.match_lbl.setStyleSheet(self._MATCH_LBL_NORMAL)
             self.match_lbl.setText(f'0 matches for "{q}"')
         else:
             for p in results:
@@ -697,8 +713,17 @@ class CashierWindow(BaseWindow):
                 item.setData(Qt.ItemDataRole.UserRole, p)
                 self.results_list.addItem(item)
             n = len(results)
-            self.match_lbl.setText(
-                f'{n} match{"es" if n != 1 else ""} for "{q}"')
+            if overflow:
+                # Deliberately loud (not the muted grey of the normal count) so a
+                # cashier can't miss that the list is cut off.
+                self.match_lbl.setStyleSheet(self._MATCH_LBL_WARN)
+                self.match_lbl.setText(
+                    f'{n}+ matches for "{q}"  —  showing the first {n}. '
+                    f'Keep typing to narrow it down.')
+            else:
+                self.match_lbl.setStyleSheet(self._MATCH_LBL_NORMAL)
+                self.match_lbl.setText(
+                    f'{n} match{"es" if n != 1 else ""} for "{q}"')
         self.match_lbl.setVisible(True)
         self.results_list.setVisible(True)
 
