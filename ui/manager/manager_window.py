@@ -127,22 +127,41 @@ class ManagerWindow(SupervisorWindow):
             QTabBar::tab:hover{{color:{DARK_CARD};}}
         """)
         # Manager-only tabs first
-        self.tabs.addTab(self._build_users_tab(),    "👥  Users")
-        self.tabs.addTab(self._build_business_tab(), "🏢  Business")
+        # Tabs are built the first time they are opened and refreshed when the
+        # user returns to them (see ui/shared/lazy_tabs.py). The Business tab
+        # (settings forms) and Import tab have no refresher: they hold the
+        # user's unsaved edits.
+        from ui.shared.lazy_tabs import LazyTabs
+        self._lazy = LazyTabs(self.tabs)
+        self._lazy.add("users", "👥  Users", self._build_users_tab,
+                       self._usr_refresh_on_show)
+        self._lazy.add("business", "🏢  Business", self._build_business_tab)
         # Then all supervisor tabs
-        self.tabs.addTab(self._build_products_tab(),     "📦  Products")
-        self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
-        self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
+        self._lazy.add("products", "📦  Products", self._build_products_tab,
+                       lambda: self._load_products(self._pg_search))
+        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
+                       self._rpt_refresh_on_show)
+        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
+                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
         # void_refund_tab.py was retired — reuse the same inline void/refund
         # tab-builder inherited from SupervisorWindow (already reworked to
         # use per-item quantity refunds against the fixed reconciliation logic).
-        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
-        self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
-        self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
-        self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
-        self.tabs.addTab(self._build_dbf_import_tab(),   "📥  Import")
-        self.tabs.setCurrentIndex(0)
+        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
+                       self._vr_refresh_on_show)
+        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
+                       lambda: self._lazy.page("stock")._refresh_all())
+        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
+                       lambda: self._lazy.page("pricetags")._load_table())
+        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
+        self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
+        self._lazy.start(0)
         return self.tabs
+
+    def _usr_refresh_on_show(self):
+        """Reload users (another manager may have added/changed accounts) and
+        re-apply the search/role filter the manager had typed."""
+        self._usr_load()
+        self._usr_filter()
 
     # ================================================================
     # USERS TAB
@@ -1081,7 +1100,10 @@ class ManagerWindow(SupervisorWindow):
         no persistent group/discount combo to refresh here anymore — just
         reload the product table so imported rows show up immediately."""
         self._pg_page = 0
-        self._load_products(self.product_search.text())
+        # The Products tab is built lazily: if it hasn't been opened yet there is
+        # nothing to reload — it will load fresh data when it is first shown.
+        if self._lazy.is_built("products"):
+            self._load_products(self.product_search.text())
 
     def _build_quickkeys_tab(self):
         from ui.shared.searchable_product_combo import SearchableProductCombo

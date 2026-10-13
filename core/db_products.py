@@ -1008,15 +1008,58 @@ def get_all_stock_adjustments(search: str = "", limit: int = 100) -> list[dict]:
         return [dict(r) for r in con.execute(q, params)]
 
 
-def get_low_stock_products(threshold: int = 5) -> list[dict]:
+def _low_stock_where(threshold: int, search: str, out_only: bool) -> tuple[str, list]:
+    where  = "p.is_case = 0 AND p.variant_group_id IS NULL AND "
+    params: list = []
+    if out_only:
+        where += "p.stock = 0"
+    else:
+        where += "p.stock <= ?"; params.append(threshold)
+    if search:
+        where += " AND LOWER(p.name) LIKE ? ESCAPE '\\'"
+        params.append(_like_literal(search.lower()))
+    return where, params
+
+
+def get_low_stock_products(threshold: int = 5, search: str = "",
+                           limit: int | None = None, offset: int = 0,
+                           out_only: bool = False) -> list[dict]:
     """Standalone/alias-member products at or below threshold. Excludes case
-    products and variant-group members (use get_low_stock_variant_groups for those)."""
+    products and variant-group members (use get_low_stock_variant_groups for those).
+
+    search     — optional product-name substring (case-insensitive, literal).
+    limit/offset — page the result in SQL. Leave limit=None only when you really
+                   need every row: a catalog where stock isn't tracked yet has
+                   EVERY product at 0, i.e. tens of thousands of rows.
+    out_only   — only products with stock exactly 0 (threshold is ignored)."""
+    where, params = _low_stock_where(threshold, search, out_only)
+    q = ("SELECT p.*, g.name AS group_name FROM products p "
+         "LEFT JOIN groups g ON g.id = p.group_id "
+         f"WHERE {where} ORDER BY p.stock ASC, p.name")
+    if limit is not None:
+        q += " LIMIT ? OFFSET ?"; params += [limit, offset]
     with _conn() as con:
-        return [dict(r) for r in con.execute(
-            """SELECT p.*, g.name AS group_name
-               FROM   products p
-               LEFT   JOIN groups g ON g.id = p.group_id
-               WHERE  p.stock <= ? AND p.is_case = 0 AND p.variant_group_id IS NULL
-               ORDER  BY p.stock ASC, p.name""",
-            (threshold,)
-        )]
+        return [dict(r) for r in con.execute(q, params)]
+
+
+def count_low_stock_products(threshold: int = 5, search: str = "",
+                             out_only: bool = False) -> int:
+    where, params = _low_stock_where(threshold, search, out_only)
+    with _conn() as con:
+        return con.execute(f"SELECT COUNT(*) FROM products p WHERE {where}", params).fetchone()[0]
+
+
+def low_stock_summary(threshold: int = 5, name_limit: int = 4) -> dict:
+    """What the Stock tab's alert banner needs, without loading every row:
+    total low (incl. out), how many are out (stock == 0), how many are merely
+    low (0 < stock <= threshold), and the first few names (lowest stock first)."""
+    where, params = _low_stock_where(threshold, "", False)
+    with _conn() as con:
+        total, out, warn = con.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(p.stock = 0), 0), "
+            f"COALESCE(SUM(p.stock > 0), 0) FROM products p WHERE {where}", params
+        ).fetchone()
+        names = [r[0] for r in con.execute(
+            f"SELECT p.name FROM products p WHERE {where} "
+            f"ORDER BY p.stock ASC, p.name LIMIT ?", params + [name_limit])]
+    return {"total": total, "out": out, "warn": warn, "names": names}

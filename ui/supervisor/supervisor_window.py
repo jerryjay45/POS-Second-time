@@ -121,9 +121,17 @@ class SupervisorWindow(BaseWindow):
             QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
             QTabBar::tab:hover{{color:{DARK_CARD};}}
         """)
-        self.tabs.addTab(self._build_products_tab(),     "📦  Products")
-        self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
-        self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
+        # Tabs are built the first time they are opened (not all at once at
+        # login — that took ~1.5 s with a big catalog) and refreshed each time
+        # the user comes back to them. See ui/shared/lazy_tabs.py.
+        from ui.shared.lazy_tabs import LazyTabs
+        self._lazy = LazyTabs(self.tabs)
+        self._lazy.add("products", "📦  Products", self._build_products_tab,
+                       lambda: self._load_products(self._pg_search))
+        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
+                       self._rpt_refresh_on_show)
+        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
+                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
         # The old standalone void_refund_tab.py file was retired — its
         # functionality is superseded by the inline void/refund section
         # built into this window's own tab (see _vr_* methods below),
@@ -132,12 +140,38 @@ class SupervisorWindow(BaseWindow):
         # never actually added here — only reachable via the (now deleted)
         # standalone file, and only from the Manager window. Supervisors
         # had no void/refund access at all. Adding it here fixes that.
-        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
-        self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
-        self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
-        self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
-        self.tabs.setCurrentIndex(0)
+        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
+                       self._vr_refresh_on_show)
+        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
+                       lambda: self._lazy.page("stock")._refresh_all())
+        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
+                       lambda: self._lazy.page("pricetags")._load_table())
+        # Quick Keys is a form of unsaved edits, so it has no refresher.
+        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
+        self._lazy.start(0)
         return self.tabs
+
+    # ── refreshers used when a tab is shown again ───────────────────────
+    def _rpt_refresh_on_show(self):
+        """Reload the selected cashier's sessions (live totals change as sales
+        happen) and re-select the session that was being viewed."""
+        sel = getattr(self, "_rpt_selected_session_id", None)
+        self._rpt_refresh()
+        if sel is None:
+            return
+        for r in range(self.rpt_session_list.rowCount()):
+            it = self.rpt_session_list.item(r, 0)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == sel:
+                self.rpt_session_list.selectRow(r)
+                self._rpt_on_session_selected()
+                break
+
+    def _vr_refresh_on_show(self):
+        """Reload the receipt list — but not while a receipt is selected for
+        voiding/refunding, so a half-finished action is never disturbed."""
+        if self._vr_selected_tx_id is not None:
+            return
+        self._vr_load(self._vr_pg_search, self._vr_pg_status)
 
     # ================================================================
     # PRODUCTS TAB
