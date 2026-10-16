@@ -419,6 +419,8 @@ class CheckoutDialog(QDialog):
 
     def _save_transaction(self, cash_tendered: float,
                           card_amount: float, change: float) -> bool:
+        # ── Step 1: record the sale. If THIS fails nothing was saved, so
+        # returning False ("try again") is safe.
         try:
             items = []
             for ci in self.cart:
@@ -446,30 +448,55 @@ class CheckoutDialog(QDialog):
                 card_amount     = card_amount,
                 change_given    = max(0, change),
             )
-
             self.last_txn_id = receipt["receipt_number"]
-            add_session_sales(self.session_id, self.total)
-
-            # Decrement stock if tracking is enabled
-            from core.db_config import get_bool
-            if get_bool("stock_tracking", False):
-                from core.db_products import decrement_stock
-                for ci in self.cart:
-                    if ci.get("id"):
-                        decrement_stock(ci["id"], ci["qty"])
-
-            # Auto-print receipt (non-blocking)
-            try:
-                from utils.print_manager import print_receipt
-                print_receipt(receipt, parent=self)
-            except Exception as e:
-                print(f"[Print] Receipt print skipped: {e}")
-
-            return True
-
         except Exception as e:
             print(f"[Checkout] Save error: {e}")
             return False
+
+        # ── Step 2: the sale IS recorded from here on. Nothing below may make
+        # this method return False — the cashier would be told to "try again"
+        # and a retry would record (and charge) the same sale twice. Problems
+        # in the follow-up bookkeeping are reported, not treated as a failed sale.
+        problems = []
+
+        try:
+            add_session_sales(self.session_id, self.total)
+        except Exception as e:
+            print(f"[Checkout] Session total not updated for receipt "
+                  f"#{self.last_txn_id}: {e}")
+            problems.append("the session's running total was not updated")
+
+        # Decrement stock if tracking is enabled — all cart lines in ONE
+        # transaction, so stock is either fully updated for this sale or not
+        # touched at all (never half-updated), with one commit instead of one
+        # per line.
+        try:
+            from core.db_config import get_bool
+            if get_bool("stock_tracking", False):
+                from core.db_products import decrement_stock_batch
+                decrement_stock_batch(
+                    [(ci.get("id"), ci["qty"]) for ci in self.cart if ci.get("id")]
+                )
+        except Exception as e:
+            print(f"[Checkout] Stock not updated for receipt #{self.last_txn_id}: {e}")
+            problems.append("stock levels were not updated")
+
+        # Auto-print receipt (raw mode prints in the background)
+        try:
+            from utils.print_manager import print_receipt
+            print_receipt(receipt, parent=self)
+        except Exception as e:
+            print(f"[Print] Receipt print skipped: {e}")
+
+        if problems:
+            QMessageBox.warning(
+                self, "Sale Saved",
+                f"Receipt #{self.last_txn_id} WAS saved — the sale is complete, "
+                f"do NOT charge the customer again.\n\n"
+                f"However, {' and '.join(problems)}.\n"
+                f"Please tell a supervisor so it can be corrected."
+            )
+        return True
 
     # ================================================================
     # HELPERS

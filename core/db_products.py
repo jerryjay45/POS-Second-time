@@ -836,51 +836,73 @@ def recalculate_all_cases(case_profit_pct: float = None) -> int:
 #   - is_case, case_product_id set        -> selling decrements the SINGLE's stock
 #   - is_case, case_variant_group_id set  -> selling decrements the GROUP's stock
 
+def _decrement_stock_on(con, product_id: int, qty: int):
+    """Apply one sale line's stock change on an open connection. Does NOT
+    commit — the caller decides the transaction boundary."""
+    p = con.execute(
+        """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
+                  alias_group_id, variant_group_id
+           FROM products WHERE id = ?""",
+        (product_id,)
+    ).fetchone()
+    if not p:
+        return
+
+    if p["is_case"] and p["case_variant_group_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (units, p["case_variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Sale')""",
+            (p["case_variant_group_id"], -units)
+        )
+    elif p["is_case"] and p["case_product_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (units, p["case_product_id"])
+        )
+    elif p["variant_group_id"]:
+        con.execute(
+            "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (qty, p["variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Sale')""",
+            (p["variant_group_id"], -qty)
+        )
+    else:
+        # Standalone or alias-group member — own stock
+        con.execute(
+            "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (qty, product_id)
+        )
+
+
 def decrement_stock(product_id: int, qty: int):
     """Decrement stock for a sale. Clamps at 0."""
     with _conn() as con:
-        p = con.execute(
-            """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
-                      alias_group_id, variant_group_id
-               FROM products WHERE id = ?""",
-            (product_id,)
-        ).fetchone()
-        if not p:
-            return
+        _decrement_stock_on(con, product_id, qty)
+        con.commit()
 
-        if p["is_case"] and p["case_variant_group_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (units, p["case_variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Sale')""",
-                (p["case_variant_group_id"], -units)
-            )
-        elif p["is_case"] and p["case_product_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (units, p["case_product_id"])
-            )
-        elif p["variant_group_id"]:
-            con.execute(
-                "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (qty, p["variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Sale')""",
-                (p["variant_group_id"], -qty)
-            )
-        else:
-            # Standalone or alias-group member — own stock
-            con.execute(
-                "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (qty, product_id)
-            )
+
+def decrement_stock_batch(items):
+    """Decrement stock for a whole sale — `items` is an iterable of
+    (product_id, qty), applied in order.
+
+    One transaction, one commit: either every line is applied or (if anything
+    fails part-way) none are, so a sale can never leave stock half-updated.
+    Also ~N times fewer commits than calling decrement_stock per cart line."""
+    items = [(pid, q) for pid, q in items if pid]
+    if not items:
+        return
+    with _conn() as con:                 # rolls back automatically on any exception
+        for pid, q in items:
+            _decrement_stock_on(con, pid, q)
         con.commit()
 
 
