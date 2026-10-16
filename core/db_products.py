@@ -906,50 +906,72 @@ def decrement_stock_batch(items):
         con.commit()
 
 
+def _increment_stock_on(con, product_id: int, qty: int):
+    """Apply one void/refund line's stock change on an open connection. Does NOT
+    commit — the caller decides the transaction boundary."""
+    p = con.execute(
+        """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
+                  alias_group_id, variant_group_id
+           FROM products WHERE id = ?""",
+        (product_id,)
+    ).fetchone()
+    if not p:
+        return
+
+    if p["is_case"] and p["case_variant_group_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
+            (units, p["case_variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Void/Refund')""",
+            (p["case_variant_group_id"], units)
+        )
+    elif p["is_case"] and p["case_product_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE products SET stock = stock + ? WHERE id = ?",
+            (units, p["case_product_id"])
+        )
+    elif p["variant_group_id"]:
+        con.execute(
+            "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
+            (qty, p["variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Void/Refund')""",
+            (p["variant_group_id"], qty)
+        )
+    else:
+        con.execute(
+            "UPDATE products SET stock = stock + ? WHERE id = ?",
+            (qty, product_id)
+        )
+
+
 def increment_stock(product_id: int, qty: int):
     """Increment stock for a void/refund."""
     with _conn() as con:
-        p = con.execute(
-            """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
-                      alias_group_id, variant_group_id
-               FROM products WHERE id = ?""",
-            (product_id,)
-        ).fetchone()
-        if not p:
-            return
+        _increment_stock_on(con, product_id, qty)
+        con.commit()
 
-        if p["is_case"] and p["case_variant_group_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
-                (units, p["case_variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Void/Refund')""",
-                (p["case_variant_group_id"], units)
-            )
-        elif p["is_case"] and p["case_product_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE products SET stock = stock + ? WHERE id = ?",
-                (units, p["case_product_id"])
-            )
-        elif p["variant_group_id"]:
-            con.execute(
-                "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
-                (qty, p["variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Void/Refund')""",
-                (p["variant_group_id"], qty)
-            )
-        else:
-            con.execute(
-                "UPDATE products SET stock = stock + ? WHERE id = ?",
-                (qty, product_id)
-            )
+
+def increment_stock_batch(items):
+    """Put stock back for a whole void/refund — `items` is an iterable of
+    (product_id, qty), applied in order.
+
+    One transaction, one commit: every line is restored or (if anything fails
+    part-way) none are, so a void/refund can never leave stock half-restored —
+    the mirror of decrement_stock_batch()."""
+    items = [(pid, q) for pid, q in items if pid]
+    if not items:
+        return
+    with _conn() as con:                 # rolls back automatically on any exception
+        for pid, q in items:
+            _increment_stock_on(con, pid, q)
         con.commit()
 
 
