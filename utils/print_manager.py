@@ -102,6 +102,18 @@ def _safe_num(receipt_number: str) -> str:
     return receipt_number.replace("#", "").replace("/", "-").strip()
 
 
+def _finalize(lines: list) -> list:
+    """Apply the receipt layout (character folding, divider, left margin, feed
+    lines) — see utils/receipt_layout.py. A layout problem must never stop a
+    receipt printing, so any error falls back to the unfinished lines."""
+    try:
+        from utils.receipt_layout import finalize_lines
+        return finalize_lines(lines)
+    except Exception as e:
+        print(f"[PrintManager] layout not applied: {e}")
+        return lines
+
+
 def _prepare_print(text: str, lines: list | None):
     """Main-thread half of a print: read the settings (database access stays
     on this thread). Returns (printer, build) where `build` is a zero-argument
@@ -323,7 +335,7 @@ def print_receipt(receipt: dict, parent=None) -> bool:
         from core.db_config import get as cfg_get
         from utils.receipt_formatter import format_sale, format_sale_lines
         biz, currency = _get_biz_and_currency()
-        lines = format_sale_lines(receipt, biz, currency)
+        lines = _finalize(format_sale_lines(receipt, biz, currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "transactions"],
@@ -350,8 +362,8 @@ def print_void(receipt: dict, refund: dict,
         biz, currency = _get_biz_and_currency()
         voided_by = voided_by_user.get("full_name", "") if voided_by_user else ""
         reason    = refund.get("reason", "") if refund else ""
-        lines = format_void_lines(receipt, biz, voided_by=voided_by,
-                                  reason=reason, currency=currency)
+        lines = _finalize(format_void_lines(receipt, biz, voided_by=voided_by,
+                                            reason=reason, currency=currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "voids"],
@@ -372,9 +384,9 @@ def print_refund(receipt: dict, refund: dict,
         reason      = refund.get("reason", "") if refund else ""
         amount      = refund.get("amount", receipt.get("total", 0))
         refund_type = refund.get("refund_type", "full") if refund else "full"
-        lines = format_refund_lines(receipt, biz, refund_amount=amount,
-                                    refund_type=refund_type, refunded_by=refunded_by,
-                                    reason=reason, currency=currency)
+        lines = _finalize(format_refund_lines(receipt, biz, refund_amount=amount,
+                                              refund_type=refund_type, refunded_by=refunded_by,
+                                              reason=reason, currency=currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "refunds"],
@@ -419,13 +431,13 @@ def print_session(session: dict, report_type: str = "full",
             u = get_user_by_id(session["closed_by"])
             closed_by = u["full_name"] if u else ""
 
-        lines = format_session_lines(
+        lines = _finalize(format_session_lines(
             session, totals, cashier_name, biz,
             opened_by=opened_by, closed_by=closed_by,
             currency=currency, report_type=report_type,
             group_totals=grp_totals, voided_receipts=voided,
             all_receipts=all_receipts,
-        )
+        ))
         text = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(session.get("user_id"))
         report_folder  = _safe_folder_name(report_type)
@@ -452,7 +464,7 @@ def reprint_receipt(receipt_number: str, parent=None) -> bool:
             return False
         from utils.receipt_formatter import format_sale_lines
         biz, currency = _get_biz_and_currency()
-        lines = format_sale_lines(receipt, biz, currency)
+        lines = _finalize(format_sale_lines(receipt, biz, currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "transactions"],
@@ -460,6 +472,49 @@ def reprint_receipt(receipt_number: str, parent=None) -> bool:
         return _auto_print(text, parent, lines=lines, cash_drawer=False)
     except Exception as e:
         print(f"[PrintManager] reprint_receipt error: {e}")
+        return False
+
+
+def print_lines(lines: list, parent=None, *, finish: bool = True,
+                feed_override=None, margin_override=None, cash_drawer: bool = False,
+                wait: bool = False) -> bool:
+    """Print an arbitrary list of (text, kind) lines — used by the test receipt and
+    the calibration wizard.
+
+    finish=True runs the normal layout pass. For calibration sheets pass
+    finish=False with feed_override/margin_override=0 so the SAVED margin and feed
+    can't distort what is being measured (characters are still folded for the
+    current mode). wait=True blocks until the printer has accepted the job (so
+    the wizard knows when it is safe to ask the next question); otherwise raw
+    mode sends it from the background worker.
+    Returns True if the job was handed to the printer (or queued)."""
+    try:
+        from core.db_config import get as cfg_get
+        from utils.receipt_layout import finalize_lines, load_layout
+        if finish:
+            lines = finalize_lines(lines)
+        else:
+            lines = finalize_lines(lines, load_layout(),
+                                   feed_override=feed_override if feed_override is not None else 0,
+                                   margin_override=margin_override if margin_override is not None else 0)
+        text = "\n".join(t for t, _k in lines)
+        raw = cfg_get("receipt_printer_mode", "raw").strip() == "raw"
+        if raw and not wait:
+            return _auto_print_background(text, lines=lines, cash_drawer=cash_drawer)
+        return _auto_print(text, parent, lines=lines, cash_drawer=cash_drawer)
+    except Exception as e:
+        print(f"[PrintManager] print_lines error: {e}")
+        return False
+
+
+def print_test_receipt(parent=None) -> bool:
+    """Print the sample sale through the real print path with the saved layout."""
+    from utils.receipt_samples import preview_lines
+    try:
+        biz, currency = _get_biz_and_currency()
+        return print_lines(preview_lines("sale", biz, currency), parent)
+    except Exception as e:
+        print(f"[PrintManager] print_test_receipt error: {e}")
         return False
 
 

@@ -29,16 +29,26 @@ Line = tuple[str, str]   # (text, kind)
 
 
 def get_width() -> int:
-    """Current receipt column width, from the configured paper size."""
-    from utils.printer_capabilities import columns_for_width_mm, FALLBACK_COLUMNS
+    """Columns available to the receipt text: the paper's columns (measured by
+    the calibration wizard, or worked out from the paper width) minus the left
+    margin. See utils/receipt_layout.py."""
+    from utils.printer_capabilities import FALLBACK_COLUMNS
     try:
-        from core.db_config import get as cfg_get
-        mm = cfg_get("receipt_paper_width_mm", "")
-        if not mm:
-            return FALLBACK_COLUMNS
-        return columns_for_width_mm(mm)
+        from utils.receipt_layout import load_layout
+        return load_layout().width
     except Exception:
         return FALLBACK_COLUMNS
+
+
+def _layout():
+    """The saved layout (header toggles, extra lines). Defaults reproduce the
+    receipts exactly as they were before layout settings existed."""
+    from utils.receipt_layout import load_layout
+    try:
+        return load_layout()
+    except Exception:
+        from utils.receipt_layout import Layout
+        return Layout()
 
 
 def _lines_to_text(lines: list[Line]) -> str:
@@ -133,22 +143,33 @@ def _ts(dt_str: str) -> str:
         return str(dt_str)[:16]
 
 def _header(biz: dict, width: int) -> list[Line]:
+    lay = _layout()
     lines: list[Line] = [(_center(biz.get("name", "POS System"), width), "biz_name")]
-    if biz.get("address"):
+    if lay.show_address and biz.get("address"):
         for l in _wrap(biz["address"], width):
             lines.append((_center(l, width), "normal"))
-    if biz.get("phone"):
+    if lay.show_phone and biz.get("phone"):
         lines.append((_center(f"Tel: {biz['phone']}", width), "normal"))
-    if biz.get("tax_id"):
+    if lay.show_trn and biz.get("tax_id"):
         lines.append((_center(f"TRN: {biz['tax_id']}", width), "normal"))
+    for extra in lay.header_extra:                       # layout: extra header lines
+        for l in _wrap(extra, width):
+            lines.append((_center(l, width), "normal"))
     lines.append((_div(width), "div"))
     return lines
 
 def _footer(biz: dict, width: int) -> list[Line]:
+    lay = _layout()
     lines: list[Line] = [(_div(width), "div")]
     msg = biz.get("receipt_footer", "Thank you for your business!")
-    for l in _wrap(msg, width):
-        lines.append((_center(l, width), "normal"))
+    for chunk in str(msg).split("\n"):                    # a footer may span several lines
+        for l in _wrap(chunk, width):
+            lines.append((_center(l, width), "normal"))
+    for extra in lay.footer_extra:                       # layout: extra footer lines
+        for l in _wrap(extra, width):
+            lines.append((_center(l, width), "normal"))
+    # Two blank lines of paper feed. Replaced by the "feed lines" setting when
+    # one has been saved (utils.receipt_layout.finalize_lines).
     lines.append(("", "normal"))
     lines.append(("", "normal"))
     return lines
@@ -164,7 +185,7 @@ def format_sale_lines(receipt: dict, biz: dict, currency: str = "$",
     lines.append((_right("Receipt:", receipt["receipt_number"], w), "normal"))
     lines.append((_right("Date:",    _ts(receipt["created_at"]), w), "normal"))
     lines.append((_right("Method:",  receipt["payment_method"].capitalize(), w), "normal"))
-    if receipt.get("cashier_name"):
+    if receipt.get("cashier_name") and _layout().show_cashier:
         lines.append((_right("Cashier:", receipt["cashier_name"], w), "normal"))
     lines.append((_div(w), "div"))
 

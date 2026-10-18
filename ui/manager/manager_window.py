@@ -136,6 +136,10 @@ class ManagerWindow(SupervisorWindow):
         self._lazy.add("users", "👥  Users", self._build_users_tab,
                        self._usr_refresh_on_show)
         self._lazy.add("business", "🏢  Business", self._build_business_tab)
+        # Receipt designer: printer profiles, paper/feed, receipt look, live preview,
+        # calibration, export/import. Reloads on return unless it has unsaved edits.
+        self._lazy.add("receipt", "🖨  Receipt", self._build_receipt_tab,
+                       lambda: self._lazy.page("receipt").reload_if_clean())
         # Then all supervisor tabs
         self._lazy.add("products", "📦  Products", self._build_products_tab,
                        lambda: self._load_products(self._pg_search))
@@ -156,6 +160,20 @@ class ManagerWindow(SupervisorWindow):
         self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
         self._lazy.start(0)
         return self.tabs
+
+    def _build_receipt_tab(self):
+        from ui.manager.receipt_tab import ReceiptDesignerTab
+        tab = ReceiptDesignerTab(self)
+        tab.saved.connect(self._on_receipt_settings_saved)
+        return tab
+
+    def _on_receipt_settings_saved(self):
+        """The designer wrote printer settings that Business → Printers also shows."""
+        try:
+            if self._lazy.is_built("business"):
+                self._printers_load()
+        except Exception as e:
+            print(f"[Receipt] could not refresh the Printers panel: {e}")
 
     def _usr_refresh_on_show(self):
         """Reload users (another manager may have added/changed accounts) and
@@ -772,15 +790,18 @@ class ManagerWindow(SupervisorWindow):
 
     def _printers_detect_width(self):
         """Query the printer driver for its configured paper width."""
-        from utils.printer_capabilities import detect_paper_width_mm
+        from utils.printer_capabilities import detect_reported_width_mm, PLAUSIBLE_RECEIPT_MM
         name = self.ps_receipt_combo.currentText().strip()
-        detected = detect_paper_width_mm(name)
-        if detected:
-            self._printers_select_width(detected)
-            self.printers_feedback.setText(f"✓  Detected {detected}mm from the printer driver.")
+        reported = detect_reported_width_mm(name)
+        lo, hi = PLAUSIBLE_RECEIPT_MM
+        if reported and lo <= reported <= hi:
+            self._printers_select_width(reported)
+            self.printers_feedback.setText(f"✓  Detected {reported}mm from the printer driver.")
             self.printers_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
         else:
             self.printers_feedback.setText(
+                f"The driver reports {reported} mm, which isn't a receipt width (a Generic / Text Only "
+                "queue left on Letter, A4 or B4 does this) — set it manually." if reported else
                 "Could not detect paper width from the driver — set it manually.")
             self.printers_feedback.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
 
