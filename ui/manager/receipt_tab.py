@@ -164,7 +164,7 @@ class ReceiptDesignerTab(QWidget):
         self.mode_combo.addItem("Raster — graphics through the Windows driver", "raster")
         self.mode_combo.setStyleSheet(_INPUT)
         bl.addWidget(self.mode_combo)
-        self.escpos_cb = make_checkbox("Send ESC/POS formatting (bold, double-size totals)", False)
+        self.escpos_cb = make_checkbox("Send ESC/POS formatting (bold business name, headings and totals)", False)
         self.cutter_cb = make_checkbox("Printer has an automatic paper cutter", True)
         bl.addWidget(self.escpos_cb)
         bl.addWidget(self.cutter_cb)

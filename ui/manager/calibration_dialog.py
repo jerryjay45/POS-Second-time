@@ -76,7 +76,7 @@ class CalibrationDialog(QDialog):
         # ── 3. style ────────────────────────────────────────────────
         lay.addWidget(self._box(
             "3.  Look at the text styles (optional)",
-            "Prints bold and double-size text and a few special characters, so you can see what "
+            "Prints bold text and a few special characters, so you can see what "
             "your printer can do.",
             "Print style test", lambda: self._print(CS.style_test_lines()), None))
 
