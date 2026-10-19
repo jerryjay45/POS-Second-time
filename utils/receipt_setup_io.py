@@ -108,9 +108,8 @@ def plan_import(text: str, current: dict[str, str] | None = None,
     # cross-field sanity: the margin must leave room for text
     merged = {**cur, **plan.new_settings}
     try:
-        from utils.receipt_layout import columns_from_settings
-        cols = columns_from_settings(merged.get("receipt_paper_width_mm", "76"),
-                                     merged.get("receipt_columns", ""))
+        from utils.receipt_layout import layout_from_values
+        cols = layout_from_values(merged).columns
         if int(validate_value("receipt_left_margin", merged.get("receipt_left_margin", "0"))[1] or 0) > cols - 16:
             plan.errors.append("receipt_left_margin: leaves fewer than 16 columns for text")
     except Exception:

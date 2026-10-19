@@ -93,13 +93,15 @@ class ThermalPrinter:
 
     def __init__(self, printer_name: str = "", copies: int = 1,
                  mode: str = "raw", form_feed: bool = True,
-                 paper_width_mm: float = 76, columns: int = 40):
+                 paper_width_mm: float = 76, columns: int = 40,
+                 raster_pt: int | None = None):
         self._name   = printer_name.strip()
         self._copies = max(1, copies)
         self._mode   = mode if mode in ("raw", "raster") else "raw"
         self._form_feed = form_feed
         self._paper_width_mm = paper_width_mm
         self._columns = columns
+        self._raster_pt = raster_pt          # None = fit the columns to the paper
 
     # ── Factory ───────────────────────────────────────────────────────
 
@@ -113,15 +115,15 @@ class ThermalPrinter:
             copies = int(cfg_get("receipt_copies", "1") or "1")
         except Exception:
             name, mode, copies = "", "raw", 1
-        form_feed, mm, cols = True, 76, 40
+        form_feed, mm, cols, pt = True, 76, 40, None
         try:
             from utils.receipt_layout import load_layout
             lay = load_layout()
-            form_feed, cols = lay.form_feed, lay.columns
+            form_feed, cols, pt = lay.form_feed, lay.columns, lay.raster_pt
             mm = float(cfg_get("receipt_paper_width_mm", "76") or 76)
         except Exception:
             pass
-        return cls(name, copies, mode, form_feed, mm, cols)
+        return cls(name, copies, mode, form_feed, mm, cols, pt)
 
     # ── Context manager ───────────────────────────────────────────────
 
@@ -278,8 +280,11 @@ class ThermalPrinter:
 
             font = QFont("Courier New", 9)
             font.setStyleHint(QFont.StyleHint.Monospace)
-            fit_font_to_columns(font, painter, printer, self._columns,
-                                paper_width_mm=self._paper_width_mm)
+            if self._raster_pt:                       # a fixed size chosen in the Receipt tab
+                font.setPointSizeF(float(self._raster_pt))
+            else:                                     # fit the columns, capped by the paper width
+                fit_font_to_columns(font, painter, printer, self._columns,
+                                    paper_width_mm=self._paper_width_mm)
             painter.setFont(font)
 
             fm        = painter.fontMetrics()

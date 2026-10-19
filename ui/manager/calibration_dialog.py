@@ -40,7 +40,7 @@ class CalibrationDialog(QDialog):
         intro = QLabel(
             "Windows can't tell the program how wide the paper is or how far to feed it, "
             "so we measure it. Each test prints a short sheet. The sheets use your saved "
-            "printer settings (mode, ESC/POS, cutter) but ignore the saved margin and feed.")
+            "printer settings (mode, ESC/POS, font, cutter) but ignore the saved margin and feed. Calibrate again after changing the font.")
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color:{MUTED};font-size:12px;")
         lay.addWidget(intro)

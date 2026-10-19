@@ -4,6 +4,7 @@ Receipt designer tab (Manager window).
 Left: the settings, in three groups —
     Printer (this PC)  : printer type profile, Windows queue, print mode, ESC/POS, cutter
     Paper & feed       : paper width, columns, left margin, paper fed after printing, form feed
+    Text size          : ESC/POS font (A/B), business-name and TOTAL size, graphics-mode font size
     Receipt content    : which header lines show, extra header/footer lines, divider style
 Right: a live preview built by the same code that prints, using the UNSAVED settings.
 
@@ -12,13 +13,14 @@ Printer settings belong to this PC; the content settings are the receipt's look
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QSettings, pyqtSignal
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-                             QComboBox, QSpinBox, QPlainTextEdit, QScrollArea, QMessageBox,
+                             QComboBox, QSpinBox, QPlainTextEdit, QTextEdit, QScrollArea, QMessageBox,
                              QFileDialog, QDialog, QDialogButtonBox, QSizePolicy)
 
 from ui.shared.checkbox import make_checkbox
@@ -43,6 +45,8 @@ LABELS = {
     "receipt_show_phone": "Show phone", "receipt_show_trn": "Show TRN",
     "receipt_show_cashier": "Show cashier", "receipt_header_extra": "Extra header lines",
     "receipt_footer_extra": "Extra footer lines", "receipt_divider": "Divider character",
+    "receipt_font": "Text size (font)", "receipt_raster_font_pt": "Graphics-mode font size",
+    "receipt_heading_size": "Business name size", "receipt_total_size": "TOTAL line size",
 }
 BUSINESS_LABELS = {"name": "Business name", "address": "Address", "phone": "Phone",
                    "tax_id": "TRN", "receipt_footer": "Footer message"}
@@ -226,6 +230,38 @@ class ReceiptDesignerTab(QWidget):
         bl.addWidget(cal)
         left.addWidget(box)
 
+        # ---- Text size ----
+        box, bl = _card("Text size")
+        bl.addWidget(_lbl("Font"))
+        self.font_combo = QComboBox()
+        self.font_combo.addItem("Normal — Font A (the printer's standard)", "a")
+        self.font_combo.addItem("Compact — Font B (smaller text, more columns)", "b")
+        self.font_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.font_combo)
+        bl.addWidget(_lbl("Business name size"))
+        self.heading_combo = QComboBox()
+        self.heading_combo.addItem("Normal (bold)", "normal")
+        self.heading_combo.addItem("Tall (double height)", "tall")
+        self.heading_combo.addItem("Large (double height and width)", "double")
+        self.heading_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.heading_combo)
+        bl.addWidget(_lbl("TOTAL line size"))
+        self.total_combo = QComboBox()
+        self.total_combo.addItem("Normal (bold)", "normal")
+        self.total_combo.addItem("Tall (double height)", "tall")
+        self.total_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.total_combo)
+        bl.addWidget(_lbl("Font size in graphics (raster) mode"))
+        self.raster_pt_spin = QSpinBox()
+        self.raster_pt_spin.setRange(4, 14)
+        self.raster_pt_spin.setSpecialValueText("Auto — fit the columns")
+        self.raster_pt_spin.setSuffix(" pt")
+        self.raster_pt_spin.setStyleSheet(_INPUT)
+        bl.addWidget(self.raster_pt_spin)
+        self.size_hint = _hint("")
+        bl.addWidget(self.size_hint)
+        left.addWidget(box)
+
         # ---- Content ----
         box, bl = _card("Receipt content (same on every terminal)")
         self.addr_cb = make_checkbox("Show address", True)
@@ -273,22 +309,37 @@ class ReceiptDesignerTab(QWidget):
         self.kind_combo.setStyleSheet(_INPUT)
         top.addWidget(self.kind_combo)
         top.addStretch()
+        top.addWidget(_hint("Preview size"))
+        self.zoom_out = _btn("A−")
+        self.zoom_in = _btn("A+")
+        for b in (self.zoom_out, self.zoom_in):
+            b.setFixedWidth(40)
+        self.zoom_out.setToolTip("Smaller preview text (only the on-screen preview, not the printed receipt)")
+        self.zoom_in.setToolTip("Larger preview text (only the on-screen preview, not the printed receipt)")
+        self.zoom_out.clicked.connect(lambda: self._zoom(-1))
+        self.zoom_in.clicked.connect(lambda: self._zoom(+1))
+        top.addWidget(self.zoom_out)
+        top.addWidget(self.zoom_in)
         rl.addLayout(top)
         self.preview_info = _hint("")
         rl.addWidget(self.preview_info)
 
         mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        mono.setPointSize(10)
+        self._mono = QFont(mono)
+        try:                                   # the on-screen preview size is remembered on this PC
+            self._preview_pt = max(7, min(16, int(QSettings("POS", "ReceiptDesigner").value("preview_pt", 10))))
+        except (TypeError, ValueError):
+            self._preview_pt = 10
+        mono.setPointSize(self._preview_pt)
         self.ruler = QLabel("")
         self.ruler.setFont(mono)
-        self.ruler.setStyleSheet(f"color:{MUTED};background:{WHITE};padding:4px 10px 0 10px;"
-                                 f"border:1px solid {BORDER};border-bottom:none;")
+        self.ruler.setStyleSheet(self._ruler_css(self._preview_pt))
         rl.addWidget(self.ruler)
-        self.preview = QPlainTextEdit()
+        self.preview = QTextEdit()             # rich text, so the chosen sizes show in the preview
         self.preview.setReadOnly(True)
         self.preview.setFont(mono)
-        self.preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.preview.setStyleSheet(f"background:{WHITE};color:#111;border:1px solid {BORDER};padding:4px 10px;")
+        self.preview.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.preview.setStyleSheet(self._preview_css(self._preview_pt))
         self.preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         rl.addWidget(self.preview, stretch=1)
 
@@ -322,7 +373,9 @@ class ReceiptDesignerTab(QWidget):
         self._timer.setSingleShot(True)
         self._timer.setInterval(120)
         self._timer.timeout.connect(self._render_preview)
-        for sig in (self.mode_combo.currentIndexChanged, self.width_combo.currentIndexChanged,
+        for sig in (self.font_combo.currentIndexChanged, self.heading_combo.currentIndexChanged,
+                    self.total_combo.currentIndexChanged, self.raster_pt_spin.valueChanged,
+                    self.mode_combo.currentIndexChanged, self.width_combo.currentIndexChanged,
                     self.cols_spin.valueChanged, self.margin_spin.valueChanged,
                     self.feed_spin.valueChanged, self.div_combo.currentIndexChanged,
                     self.printer_combo.currentTextChanged, self.header_edit.textChanged,
@@ -334,6 +387,10 @@ class ReceiptDesignerTab(QWidget):
         self.kind_combo.currentIndexChanged.connect(lambda _i: self._timer.start())
         self.feed_cb.toggled.connect(lambda on: self.feed_spin.setEnabled(on))
         self.mode_combo.currentIndexChanged.connect(self._update_printer_check)
+        self.mode_combo.currentIndexChanged.connect(lambda _i: self._update_size_controls())
+        self.escpos_cb.toggled.connect(lambda _on: self._update_size_controls())
+        self.font_combo.currentIndexChanged.connect(lambda _i: self._update_size_controls())
+        self.heading_combo.currentIndexChanged.connect(lambda _i: self._update_size_controls())
         self.printer_combo.currentTextChanged.connect(lambda _t: self._update_printer_check())
 
     # ══════════════════════════════════════════════════════════════════
@@ -359,6 +416,11 @@ class ReceiptDesignerTab(QWidget):
             "receipt_header_extra": self.header_edit.toPlainText().rstrip(),
             "receipt_footer_extra": self.footer_edit.toPlainText().rstrip(),
             "receipt_divider": self.div_combo.currentData(),
+            "receipt_font": self.font_combo.currentData(),
+            "receipt_heading_size": self.heading_combo.currentData(),
+            "receipt_total_size": self.total_combo.currentData(),
+            "receipt_raster_font_pt": "" if self.raster_pt_spin.value() == self.raster_pt_spin.minimum()
+                                      else str(self.raster_pt_spin.value()),
         })
         return v
 
@@ -395,11 +457,17 @@ class ReceiptDesignerTab(QWidget):
             self.header_edit.setPlainText(g("receipt_header_extra"))
             self.footer_edit.setPlainText(g("receipt_footer_extra"))
             self.div_combo.setCurrentIndex(max(0, self.div_combo.findData(g("receipt_divider"))))
+            self.font_combo.setCurrentIndex(max(0, self.font_combo.findData(g("receipt_font"))))
+            self.heading_combo.setCurrentIndex(max(0, self.heading_combo.findData(g("receipt_heading_size"))))
+            self.total_combo.setCurrentIndex(max(0, self.total_combo.findData(g("receipt_total_size"))))
+            ok, pt, _ = RL.validate_value("receipt_raster_font_pt", g("receipt_raster_font_pt"))
+            self.raster_pt_spin.setValue(int(pt) if ok and pt else self.raster_pt_spin.minimum())
             pid = matching_profile(v)
             self.profile_combo.setCurrentIndex(max(0, self.profile_combo.findData(pid)) if pid else 0)
             self.profile_note.setText("" if not pid else get_profile(pid)["description"])
         finally:
             self._loading = was
+        self._update_size_controls()
 
     def load_from_db(self):
         self._refresh_queues(keep_text=False)
@@ -435,23 +503,116 @@ class ReceiptDesignerTab(QWidget):
             with RL.use_layout(vals):
                 lines = RL.finalize_lines(RS.preview_lines(self.kind_combo.currentData(), biz, currency))
             lay = RL.layout_from_values(vals)
-            self.preview.setPlainText("\n".join(t for t, _k in lines))
+            # Font B glyphs are narrower than Font A's, so the preview shrinks with it.
+            pt = self._preview_pt * (0.75 if lay.font == "b" else 1.0)
+            self._apply_preview_font(pt)
+            self.preview.setHtml(self._lines_html(lines, lay, pt))
             ruler = "".join(str((i // 10) % 10) if i % 10 == 0 else ("·" if i % 5 == 0 else "-")
                             for i in range(1, lay.columns + 1))
             self.ruler.setText(ruler)
+            self._update_cols_hint(lay.font)
             fold = RL.fold_target_from_values(vals)
+            if lay.escpos:
+                sizes = (f" · Font {lay.font.upper()} · name: {lay.heading_size} · total: {lay.total_size}")
+            else:
+                sizes = " · the printer's own font"
             self.preview_info.setText(
-                f"{lay.columns} columns on the paper · {lay.width} for text"
+                f"{lay.columns} columns on the paper · {lay.width} for text{sizes}"
                 + (f" · characters folded to {fold.upper()}" if fold else " · full character set (raster)"))
         except Exception as e:                       # a preview problem must not break the tab
             self.preview.setPlainText(f"(preview unavailable: {e})")
+
+    # The app's global stylesheet forces `QWidget { font-family: Inter/Segoe UI; font-size: 14px }`
+    # on every widget, which beats QWidget.setFont() — so the preview was drawn in a big
+    # PROPORTIONAL UI font (columns didn't line up, zoom did nothing). A widget's own
+    # stylesheet wins over the app-wide one, so the monospace font is set there.
+    _MONO_FAMILY = '"Consolas", "Courier New", "DejaVu Sans Mono", "Liberation Mono", monospace'
+
+    def _preview_css(self, pt: float) -> str:
+        return (f"background:{WHITE};color:#111;border:1px solid {BORDER};padding:4px 10px;"
+                f"font-family:{self._MONO_FAMILY};font-size:{pt:.1f}pt;")
+
+    def _ruler_css(self, pt: float) -> str:
+        return (f"color:{MUTED};background:{WHITE};padding:4px 10px 0 10px;"
+                f"border:1px solid {BORDER};border-bottom:none;"
+                f"font-family:{self._MONO_FAMILY};font-size:{pt:.1f}pt;")
+
+    def _apply_preview_font(self, pt: float):
+        self.preview.setStyleSheet(self._preview_css(pt))
+        self.ruler.setStyleSheet(self._ruler_css(pt))
+
+    def _lines_html(self, lines, lay, pt: float) -> str:
+        """The receipt as rich text, so bold and the business-name / TOTAL sizes show.
+        Sizes only exist with ESC/POS; plain-text and graphics modes print one size."""
+        out = []
+        for text, kind in lines:
+            css = "white-space:pre;margin:0;"
+            if lay.escpos:
+                if kind == "biz_name":
+                    css += "font-weight:bold;"
+                    if lay.heading_size == "double":
+                        css += f"font-size:{pt * 2:.1f}pt;"          # double width AND height
+                    elif lay.heading_size == "tall":
+                        css += "line-height:200%;"                   # double height, same width
+                elif kind == "title":
+                    css += "font-weight:bold;"
+                elif kind == "total":
+                    css += "font-weight:bold;"
+                    if lay.total_size == "tall":
+                        css += "line-height:200%;"
+            out.append(f'<div style="{css}">{html.escape(text) or "&nbsp;"}</div>')
+        return '<html><body style="margin:0;">' + "".join(out) + "</body></html>"
+
+    def _zoom(self, delta: int):
+        """Make the ON-SCREEN preview text bigger or smaller (the printed receipt is unaffected)."""
+        self._preview_pt = max(7, min(16, self._preview_pt + delta))
+        QSettings("POS", "ReceiptDesigner").setValue("preview_pt", self._preview_pt)
+        self._render_preview()
+
+    def _update_size_controls(self):
+        """Sizes only apply in raw mode WITH ESC/POS (the printer's own font otherwise)
+        and the graphics font size only in raster mode — enable exactly what works."""
+        if not hasattr(self, "size_hint"):
+            return
+        mode = self.mode_combo.currentData()
+        esc = mode == "raw" and self.escpos_cb.isChecked()
+        for w in (self.font_combo, self.heading_combo, self.total_combo):
+            w.setEnabled(esc)
+        self.raster_pt_spin.setEnabled(mode == "raster")
+        if mode == "raster":
+            msg = ("Graphics mode draws the receipt itself, so the text size follows the Columns setting "
+                   "(more columns = smaller text). Or set an exact size above.")
+        elif not esc:
+            msg = ("Plain-text mode prints in the printer's own font, which this program can't change. "
+                   "Tick “Send ESC/POS formatting” under Printer to choose a font and sizes.")
+        else:
+            msg = ("Compact (Font B) fits about ⅓ more characters per line, so the Columns change — "
+                   "run the calibration wizard after switching.")
+            try:
+                lay = RL.layout_from_values(self._collect())
+                if lay.heading_size == "double":
+                    from core.db_config import get_business
+                    name = (get_business().get("name") or "").strip()
+                    half = max(8, lay.width // 2)
+                    if len(name) > half:
+                        n = -(-len(name) // half)
+                        msg += (f" At “Large” the business name has {half} characters per line, so "
+                                f"“{name}” prints on {n} lines — choose Tall or Normal to keep it on one.")
+            except Exception:
+                pass
+        self.size_hint.setText(msg)
 
     def _update_code(self):
         self.code_lbl.setText(f"Setup code: <b>{RL.setup_code(IO.current_values())}</b> — "
                               "two PCs with the same code are configured identically.")
         self.code_lbl.setTextFormat(Qt.TextFormat.RichText)
-        cols = columns_for_width_mm(self.width_combo.currentData())
-        self.cols_hint.setText(f"Auto = {cols} columns for {self.width_combo.currentData()} mm paper.")
+        self._update_cols_hint(RL.layout_from_values(self._collect()).font)
+
+    def _update_cols_hint(self, font: str):
+        """'Auto = N columns' under the Columns box (Font B fits more than Font A)."""
+        cols = RL.columns_from_settings(str(self.width_combo.currentData()), "", font)
+        self.cols_hint.setText(f"Auto = {cols} columns for {self.width_combo.currentData()} mm paper"
+                               + (" in Font B." if font == "b" else "."))
 
     def _on_profile(self, index: int):
         pid = self.profile_combo.itemData(index)
@@ -510,8 +671,7 @@ class ReceiptDesignerTab(QWidget):
             ok, _n, e = RL.validate_value(k, vals.get(k, ""))
             if not ok:
                 errs.append(f"{LABELS.get(k, k)}: {e}")
-        cols = RL.columns_from_settings(vals.get("receipt_paper_width_mm", "76"),
-                                        vals.get("receipt_columns", ""))
+        cols = RL.layout_from_values(vals).columns
         try:
             if int(vals.get("receipt_left_margin") or 0) > cols - 16:
                 errs.append("Left margin: leaves fewer than 16 columns for text")
@@ -576,13 +736,14 @@ class ReceiptDesignerTab(QWidget):
 
     def _reset_layout(self):
         if QMessageBox.question(self, "Reset layout",
-                                "Reset columns, margin, paper feed, form feed and the receipt content "
-                                "options to the standard receipt? (Printer, mode and paper width stay.)",
+                                "Reset columns, margin, paper feed, form feed, text size and the receipt "
+                                "content options to the standard receipt? (Printer, mode and paper width stay.)",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
                                 ) != QMessageBox.StandardButton.Yes:
             return
         v = self._collect()
-        for k in ("receipt_columns", "receipt_left_margin", "receipt_feed_lines", "receipt_form_feed"):
+        for k in ("receipt_columns", "receipt_left_margin", "receipt_feed_lines", "receipt_form_feed",
+                  "receipt_font", "receipt_raster_font_pt"):
             v[k] = RL.HARDWARE_DEFAULTS[k]
         v.update(RL.SHARED_DEFAULTS)
         self._apply_values(v)

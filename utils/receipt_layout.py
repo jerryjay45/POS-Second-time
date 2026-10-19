@@ -36,6 +36,8 @@ HARDWARE_DEFAULTS: dict[str, str] = {
     "receipt_feed_lines":            "",     # "" = legacy: leave the formatter's 2 blank lines
     "receipt_form_feed":             "1",    # plain-text raw jobs end with a form feed
     "receipt_printer_escpos":        "0",
+    "receipt_font":                  "a",    # ESC/POS font: "a" standard, "b" compact (more columns)
+    "receipt_raster_font_pt":        "",     # raster mode: "" = fit the columns automatically
     "receipt_printer_has_cutter":    "1",
     "cash_drawer_kick_on_cash_sale": "0",
     "receipt_copies":                "1",
@@ -49,7 +51,13 @@ SHARED_DEFAULTS: dict[str, str] = {
     "receipt_header_extra": "",     # extra centred lines under the business details
     "receipt_footer_extra": "",     # extra centred lines under the footer message
     "receipt_divider":      "-",
+    "receipt_heading_size": "normal",   # business name: normal | tall | double (ESC/POS only; double was too big)
+    "receipt_total_size":   "normal",   # TOTAL line: normal (bold) | tall (ESC/POS only)
 }
+
+HEADING_SIZES = ["normal", "tall", "double"]
+TOTAL_SIZES   = ["normal", "tall"]
+FONT_B_RATIO  = (4, 3)    # Font B is ~4/3 as many columns as Font A on the same paper
 
 DIVIDER_CHOICES = ["-", "=", "*", "_", ".", "~"]
 
@@ -64,6 +72,10 @@ SPEC: dict[str, tuple] = {
     "receipt_feed_lines":            ("optint", 0, 20),
     "receipt_form_feed":             ("bool",),
     "receipt_printer_escpos":        ("bool",),
+    "receipt_font":                  ("choice", ["a", "b"]),
+    "receipt_raster_font_pt":        ("optint", 5, 14),
+    "receipt_heading_size":          ("choice", HEADING_SIZES),
+    "receipt_total_size":            ("choice", TOTAL_SIZES),
     "receipt_printer_has_cutter":    ("bool",),
     "cash_drawer_kick_on_cash_sale": ("bool",),
     "receipt_copies":                ("int", 1, 5),
@@ -130,6 +142,11 @@ class Layout:
     feed_lines: int | None = None     # None = legacy (keep the formatter's 2 blank lines)
     form_feed: bool = True
     divider: str = "-"
+    escpos: bool = False              # raw mode with ESC/POS formatting (the only mode where sizes apply)
+    font: str = "a"                   # effective ESC/POS font ("b" only when escpos is on)
+    heading_size: str = "normal"
+    total_size: str = "normal"
+    raster_pt: int | None = None      # raster mode: fixed point size, None = fit the columns
     show_address: bool = True
     show_phone: bool = True
     show_trn: bool = True
@@ -157,15 +174,20 @@ def _int(key: str, fallback: int) -> int:
     return int(v) if ok and v != "" else fallback
 
 
-def columns_from_settings(width_mm: str, override: str) -> int:
+def columns_from_settings(width_mm: str, override: str, font: str = "a") -> int:
+    """Physical columns: the measured override if there is one, otherwise worked out
+    from the paper width (Font B fits about 4/3 as many characters as Font A)."""
     from utils.printer_capabilities import columns_for_width_mm, FALLBACK_COLUMNS
     ok, v, _ = validate_value("receipt_columns", override)
     if ok and v != "":
         return int(v)
     try:
-        return columns_for_width_mm(width_mm) if str(width_mm).strip() else FALLBACK_COLUMNS
+        base = columns_for_width_mm(width_mm) if str(width_mm).strip() else FALLBACK_COLUMNS
     except Exception:
-        return FALLBACK_COLUMNS
+        base = FALLBACK_COLUMNS
+    if font == "b":
+        base = base * FONT_B_RATIO[0] // FONT_B_RATIO[1]
+    return base
 
 
 def layout_from_values(values: dict[str, str]) -> Layout:
@@ -173,13 +195,24 @@ def layout_from_values(values: dict[str, str]) -> Layout:
     designer's controls). Missing keys use the defaults."""
     def g(k: str) -> str:
         return str(values.get(k, HARDWARE_DEFAULTS.get(k, SHARED_DEFAULTS.get(k, ""))))
-    cols = columns_from_settings(g("receipt_paper_width_mm"), g("receipt_columns"))
+    # Sizes only exist in raw mode with ESC/POS formatting; elsewhere the printer
+    # uses its own font, so Font B must not change the column count.
+    escpos = g("receipt_printer_mode").strip() == "raw" and g("receipt_printer_escpos").strip() == "1"
+    font = "b" if escpos and g("receipt_font").strip() == "b" else "a"
+    cols = columns_from_settings(g("receipt_paper_width_mm"), g("receipt_columns"), font)
     ok_m, m, _ = validate_value("receipt_left_margin", g("receipt_left_margin"))
     margin = min(int(m) if ok_m and m != "" else 0, max(0, cols - 16))
     ok, feed, _ = validate_value("receipt_feed_lines", g("receipt_feed_lines"))
     div = g("receipt_divider")
+    ok_pt, pt, _ = validate_value("receipt_raster_font_pt", g("receipt_raster_font_pt"))
+    heading, total = g("receipt_heading_size"), g("receipt_total_size")
     return Layout(
         columns=cols,
+        escpos=escpos,
+        font=font,
+        heading_size=heading if heading in HEADING_SIZES else "normal",
+        total_size=total if total in TOTAL_SIZES else "normal",
+        raster_pt=int(pt) if ok_pt and pt != "" else None,
         margin=margin,
         feed_lines=int(feed) if ok and feed != "" else None,
         form_feed=g("receipt_form_feed").strip() != "0",
