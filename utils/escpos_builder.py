@@ -27,7 +27,7 @@ def build_escpos_bytes(lines: list[tuple[str, str]], cut: bool = True) -> bytes 
     """
     lines — list of (text, kind) tuples from a *_lines() formatter
             function. kind is one of:
-              "biz_name" — business name banner, bold + double size
+              "biz_name" — business name banner, bold + centred
               "title"    — section banners (*** VOID ***, etc.), bold
               "total"    — the receipt's headline total, bold
               "div"      — divider rule, printed as-is
@@ -47,11 +47,18 @@ def build_escpos_bytes(lines: list[tuple[str, str]], cut: bool = True) -> bytes 
         from escpos.printer import Dummy
         d = Dummy()
 
+        # Start every job from a known state (ESC @). Text size is sticky in
+        # the printer, so a job that ever left it in double size would make
+        # every later receipt - even plain-text ones - print huge.
+        d.hw("INIT")
+
         for text, kind in lines:
             if kind == "biz_name":
-                d.set(align="center", bold=True, double_height=True, double_width=True)
+                # Bold + centred at normal size: double size is too big and
+                # wastes paper. normal_textsize also clears any size left over.
+                d.set(align="center", bold=True, normal_textsize=True)
                 d.text(text.strip() + "\n")
-                d.set(align="left", bold=False, double_height=False, double_width=False)
+                d.set(align="left", bold=False, normal_textsize=True)
             elif kind in ("title", "total"):
                 d.set(bold=True)
                 d.text(text + "\n")

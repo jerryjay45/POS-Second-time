@@ -44,15 +44,32 @@ def configure_raster_page(printer, width_mm: float, length_mm: float = RASTER_RO
     printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
 
 
-def fit_font_to_columns(font, painter, printer, columns: int, pad_px: int = 20):
-    """Shrink/grow `font` so `columns` characters fit across the printable width
-    (the previous fixed 9 pt only happened to fit one paper size)."""
+RASTER_MAX_FONT_PT = 12.0         # a receipt never needs bigger than this
+
+
+def fit_font_to_columns(font, painter, printer, columns: int, pad_px: int = 20,
+                        paper_width_mm: float | None = None):
+    """Shrink/grow `font` so `columns` characters fit across the printable width.
+
+    The width used is the *smaller* of what the driver reports and the paper
+    width configured in the receipt settings. Without that cap, a queue left on
+    Letter/A4 reports a page 200+ mm wide, the search grows the font until 40
+    columns fill it, and the receipt prints huge. The point size is also capped
+    at RASTER_MAX_FONT_PT as a last line of defence."""
     from PyQt6.QtGui import QFontMetrics
-    page_w = printer.pageRect(printer.Unit.DevicePixel).width() - pad_px
+    page_w = printer.pageRect(printer.Unit.DevicePixel).width()
+    if paper_width_mm:
+        try:
+            dpi = printer.resolution()
+            if dpi > 0:
+                page_w = min(page_w, float(paper_width_mm) / 25.4 * dpi)
+        except Exception:
+            pass
+    page_w -= pad_px
     if page_w <= 0 or columns <= 0:
         return font
     sample = "0" * int(columns)
-    lo, hi, best = 4.0, 24.0, 9.0
+    lo, hi, best = 4.0, RASTER_MAX_FONT_PT, 9.0
     for _ in range(14):                       # binary search on point size
         mid = (lo + hi) / 2
         font.setPointSizeF(mid)
@@ -261,7 +278,8 @@ class ThermalPrinter:
 
             font = QFont("Courier New", 9)
             font.setStyleHint(QFont.StyleHint.Monospace)
-            fit_font_to_columns(font, painter, printer, self._columns)
+            fit_font_to_columns(font, painter, printer, self._columns,
+                                paper_width_mm=self._paper_width_mm)
             painter.setFont(font)
 
             fm        = painter.fontMetrics()
