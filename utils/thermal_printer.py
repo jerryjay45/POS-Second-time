@@ -29,6 +29,41 @@ class PrinterError(Exception):
     """Raised when printing fails."""
 
 
+RASTER_ROLL_LENGTH_MM = 2000     # "long roll": the page ends when the job does
+
+
+def configure_raster_page(printer, width_mm: float, length_mm: float = RASTER_ROLL_LENGTH_MM):
+    """Give a QPrinter an explicit receipt-sized page (width from the paper
+    setting, a long roll length, zero margins) instead of whatever page size the
+    Windows queue happens to be set to."""
+    from PyQt6.QtCore import QSizeF, QMarginsF
+    from PyQt6.QtGui import QPageSize, QPageLayout
+    size = QPageSize(QSizeF(float(width_mm), float(length_mm)),
+                     QPageSize.Unit.Millimeter, "Receipt")
+    printer.setPageSize(size)
+    printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
+
+
+def fit_font_to_columns(font, painter, printer, columns: int, pad_px: int = 20):
+    """Shrink/grow `font` so `columns` characters fit across the printable width
+    (the previous fixed 9 pt only happened to fit one paper size)."""
+    from PyQt6.QtGui import QFontMetrics
+    page_w = printer.pageRect(printer.Unit.DevicePixel).width() - pad_px
+    if page_w <= 0 or columns <= 0:
+        return font
+    sample = "0" * int(columns)
+    lo, hi, best = 4.0, 24.0, 9.0
+    for _ in range(14):                       # binary search on point size
+        mid = (lo + hi) / 2
+        font.setPointSizeF(mid)
+        if QFontMetrics(font, printer).horizontalAdvance(sample) <= page_w:
+            best, lo = mid, mid
+        else:
+            hi = mid
+    font.setPointSizeF(best)
+    return font
+
+
 class ThermalPrinter:
     """
     Context manager — open/close handled automatically.
@@ -40,10 +75,14 @@ class ThermalPrinter:
     """
 
     def __init__(self, printer_name: str = "", copies: int = 1,
-                 mode: str = "raw"):
+                 mode: str = "raw", form_feed: bool = True,
+                 paper_width_mm: float = 76, columns: int = 40):
         self._name   = printer_name.strip()
         self._copies = max(1, copies)
         self._mode   = mode if mode in ("raw", "raster") else "raw"
+        self._form_feed = form_feed
+        self._paper_width_mm = paper_width_mm
+        self._columns = columns
 
     # ── Factory ───────────────────────────────────────────────────────
 
@@ -57,7 +96,15 @@ class ThermalPrinter:
             copies = int(cfg_get("receipt_copies", "1") or "1")
         except Exception:
             name, mode, copies = "", "raw", 1
-        return cls(name, copies, mode)
+        form_feed, mm, cols = True, 76, 40
+        try:
+            from utils.receipt_layout import load_layout
+            lay = load_layout()
+            form_feed, cols = lay.form_feed, lay.columns
+            mm = float(cfg_get("receipt_paper_width_mm", "76") or 76)
+        except Exception:
+            pass
+        return cls(name, copies, mode, form_feed, mm, cols)
 
     # ── Context manager ───────────────────────────────────────────────
 
@@ -137,7 +184,9 @@ class ThermalPrinter:
         printers using generic text-only drivers.
         """
         lines = text.replace("\r\n", "\n").replace("\r", "\n")
-        raw   = (lines + "\n\f").encode("ascii", errors="replace")
+        # The trailing newline ends the last line; the form feed is optional
+        # (a roll printer has no pages — see the "form feed" setting).
+        raw   = (lines + ("\n\f" if self._form_feed else "\n")).encode("ascii", errors="replace")
         self._send_raw(raw)
 
     def _send_raw(self, raw: bytes):
@@ -197,6 +246,10 @@ class ThermalPrinter:
             printer.setPrinterName(self._name)
         # else: QPrinter uses OS default automatically
 
+        # Don't trust the Windows queue's page size (a queue left on Letter/A4/B4
+        # would print a full sheet per receipt): use the configured paper width.
+        configure_raster_page(printer, self._paper_width_mm)
+
         painter = QPainter()
         try:
             if not painter.begin(printer):
@@ -208,6 +261,7 @@ class ThermalPrinter:
 
             font = QFont("Courier New", 9)
             font.setStyleHint(QFont.StyleHint.Monospace)
+            fit_font_to_columns(font, painter, printer, self._columns)
             painter.setFont(font)
 
             fm        = painter.fontMetrics()

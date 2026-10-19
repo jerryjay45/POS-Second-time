@@ -127,22 +127,59 @@ class ManagerWindow(SupervisorWindow):
             QTabBar::tab:hover{{color:{DARK_CARD};}}
         """)
         # Manager-only tabs first
-        self.tabs.addTab(self._build_users_tab(),    "👥  Users")
-        self.tabs.addTab(self._build_business_tab(), "🏢  Business")
+        # Tabs are built the first time they are opened and refreshed when the
+        # user returns to them (see ui/shared/lazy_tabs.py). The Business tab
+        # (settings forms) and Import tab have no refresher: they hold the
+        # user's unsaved edits.
+        from ui.shared.lazy_tabs import LazyTabs
+        self._lazy = LazyTabs(self.tabs)
+        self._lazy.add("users", "👥  Users", self._build_users_tab,
+                       self._usr_refresh_on_show)
+        self._lazy.add("business", "🏢  Business", self._build_business_tab)
+        # Receipt designer: printer profiles, paper/feed, receipt look, live preview,
+        # calibration, export/import. Reloads on return unless it has unsaved edits.
+        self._lazy.add("receipt", "🖨  Receipt", self._build_receipt_tab,
+                       lambda: self._lazy.page("receipt").reload_if_clean())
         # Then all supervisor tabs
-        self.tabs.addTab(self._build_products_tab(),     "📦  Products")
-        self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
-        self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
+        self._lazy.add("products", "📦  Products", self._build_products_tab,
+                       lambda: self._load_products(self._pg_search))
+        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
+                       self._rpt_refresh_on_show)
+        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
+                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
         # void_refund_tab.py was retired — reuse the same inline void/refund
         # tab-builder inherited from SupervisorWindow (already reworked to
         # use per-item quantity refunds against the fixed reconciliation logic).
-        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
-        self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
-        self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
-        self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
-        self.tabs.addTab(self._build_dbf_import_tab(),   "📥  Import")
-        self.tabs.setCurrentIndex(0)
+        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
+                       self._vr_refresh_on_show)
+        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
+                       lambda: self._lazy.page("stock")._refresh_all())
+        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
+                       lambda: self._lazy.page("pricetags")._load_table())
+        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
+        self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
+        self._lazy.start(0)
         return self.tabs
+
+    def _build_receipt_tab(self):
+        from ui.manager.receipt_tab import ReceiptDesignerTab
+        tab = ReceiptDesignerTab(self)
+        tab.saved.connect(self._on_receipt_settings_saved)
+        return tab
+
+    def _on_receipt_settings_saved(self):
+        """The designer wrote printer settings that Business → Printers also shows."""
+        try:
+            if self._lazy.is_built("business"):
+                self._printers_load()
+        except Exception as e:
+            print(f"[Receipt] could not refresh the Printers panel: {e}")
+
+    def _usr_refresh_on_show(self):
+        """Reload users (another manager may have added/changed accounts) and
+        re-apply the search/role filter the manager had typed."""
+        self._usr_load()
+        self._usr_filter()
 
     # ================================================================
     # USERS TAB
@@ -753,15 +790,18 @@ class ManagerWindow(SupervisorWindow):
 
     def _printers_detect_width(self):
         """Query the printer driver for its configured paper width."""
-        from utils.printer_capabilities import detect_paper_width_mm
+        from utils.printer_capabilities import detect_reported_width_mm, PLAUSIBLE_RECEIPT_MM
         name = self.ps_receipt_combo.currentText().strip()
-        detected = detect_paper_width_mm(name)
-        if detected:
-            self._printers_select_width(detected)
-            self.printers_feedback.setText(f"✓  Detected {detected}mm from the printer driver.")
+        reported = detect_reported_width_mm(name)
+        lo, hi = PLAUSIBLE_RECEIPT_MM
+        if reported and lo <= reported <= hi:
+            self._printers_select_width(reported)
+            self.printers_feedback.setText(f"✓  Detected {reported}mm from the printer driver.")
             self.printers_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
         else:
             self.printers_feedback.setText(
+                f"The driver reports {reported} mm, which isn't a receipt width (a Generic / Text Only "
+                "queue left on Letter, A4 or B4 does this) — set it manually." if reported else
                 "Could not detect paper width from the driver — set it manually.")
             self.printers_feedback.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
 
@@ -1081,7 +1121,10 @@ class ManagerWindow(SupervisorWindow):
         no persistent group/discount combo to refresh here anymore — just
         reload the product table so imported rows show up immediately."""
         self._pg_page = 0
-        self._load_products(self.product_search.text())
+        # The Products tab is built lazily: if it hasn't been opened yet there is
+        # nothing to reload — it will load fresh data when it is first shown.
+        if self._lazy.is_built("products"):
+            self._load_products(self.product_search.text())
 
     def _build_quickkeys_tab(self):
         from ui.shared.searchable_product_combo import SearchableProductCombo

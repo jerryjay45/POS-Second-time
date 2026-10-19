@@ -836,98 +836,142 @@ def recalculate_all_cases(case_profit_pct: float = None) -> int:
 #   - is_case, case_product_id set        -> selling decrements the SINGLE's stock
 #   - is_case, case_variant_group_id set  -> selling decrements the GROUP's stock
 
+def _decrement_stock_on(con, product_id: int, qty: int):
+    """Apply one sale line's stock change on an open connection. Does NOT
+    commit — the caller decides the transaction boundary."""
+    p = con.execute(
+        """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
+                  alias_group_id, variant_group_id
+           FROM products WHERE id = ?""",
+        (product_id,)
+    ).fetchone()
+    if not p:
+        return
+
+    if p["is_case"] and p["case_variant_group_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (units, p["case_variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Sale')""",
+            (p["case_variant_group_id"], -units)
+        )
+    elif p["is_case"] and p["case_product_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (units, p["case_product_id"])
+        )
+    elif p["variant_group_id"]:
+        con.execute(
+            "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (qty, p["variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Sale')""",
+            (p["variant_group_id"], -qty)
+        )
+    else:
+        # Standalone or alias-group member — own stock
+        con.execute(
+            "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
+            (qty, product_id)
+        )
+
+
 def decrement_stock(product_id: int, qty: int):
     """Decrement stock for a sale. Clamps at 0."""
     with _conn() as con:
-        p = con.execute(
-            """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
-                      alias_group_id, variant_group_id
-               FROM products WHERE id = ?""",
-            (product_id,)
-        ).fetchone()
-        if not p:
-            return
-
-        if p["is_case"] and p["case_variant_group_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (units, p["case_variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Sale')""",
-                (p["case_variant_group_id"], -units)
-            )
-        elif p["is_case"] and p["case_product_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (units, p["case_product_id"])
-            )
-        elif p["variant_group_id"]:
-            con.execute(
-                "UPDATE variant_groups SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (qty, p["variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Sale')""",
-                (p["variant_group_id"], -qty)
-            )
-        else:
-            # Standalone or alias-group member — own stock
-            con.execute(
-                "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?",
-                (qty, product_id)
-            )
+        _decrement_stock_on(con, product_id, qty)
         con.commit()
+
+
+def decrement_stock_batch(items):
+    """Decrement stock for a whole sale — `items` is an iterable of
+    (product_id, qty), applied in order.
+
+    One transaction, one commit: either every line is applied or (if anything
+    fails part-way) none are, so a sale can never leave stock half-updated.
+    Also ~N times fewer commits than calling decrement_stock per cart line."""
+    items = [(pid, q) for pid, q in items if pid]
+    if not items:
+        return
+    with _conn() as con:                 # rolls back automatically on any exception
+        for pid, q in items:
+            _decrement_stock_on(con, pid, q)
+        con.commit()
+
+
+def _increment_stock_on(con, product_id: int, qty: int):
+    """Apply one void/refund line's stock change on an open connection. Does NOT
+    commit — the caller decides the transaction boundary."""
+    p = con.execute(
+        """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
+                  alias_group_id, variant_group_id
+           FROM products WHERE id = ?""",
+        (product_id,)
+    ).fetchone()
+    if not p:
+        return
+
+    if p["is_case"] and p["case_variant_group_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
+            (units, p["case_variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Void/Refund')""",
+            (p["case_variant_group_id"], units)
+        )
+    elif p["is_case"] and p["case_product_id"]:
+        units = (p["case_qty"] or 1) * qty
+        con.execute(
+            "UPDATE products SET stock = stock + ? WHERE id = ?",
+            (units, p["case_product_id"])
+        )
+    elif p["variant_group_id"]:
+        con.execute(
+            "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
+            (qty, p["variant_group_id"])
+        )
+        con.execute(
+            """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
+               VALUES (?, ?, 'Void/Refund')""",
+            (p["variant_group_id"], qty)
+        )
+    else:
+        con.execute(
+            "UPDATE products SET stock = stock + ? WHERE id = ?",
+            (qty, product_id)
+        )
 
 
 def increment_stock(product_id: int, qty: int):
     """Increment stock for a void/refund."""
     with _conn() as con:
-        p = con.execute(
-            """SELECT is_case, case_qty, case_product_id, case_variant_group_id,
-                      alias_group_id, variant_group_id
-               FROM products WHERE id = ?""",
-            (product_id,)
-        ).fetchone()
-        if not p:
-            return
+        _increment_stock_on(con, product_id, qty)
+        con.commit()
 
-        if p["is_case"] and p["case_variant_group_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
-                (units, p["case_variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Void/Refund')""",
-                (p["case_variant_group_id"], units)
-            )
-        elif p["is_case"] and p["case_product_id"]:
-            units = (p["case_qty"] or 1) * qty
-            con.execute(
-                "UPDATE products SET stock = stock + ? WHERE id = ?",
-                (units, p["case_product_id"])
-            )
-        elif p["variant_group_id"]:
-            con.execute(
-                "UPDATE variant_groups SET stock = stock + ? WHERE id = ?",
-                (qty, p["variant_group_id"])
-            )
-            con.execute(
-                """INSERT INTO stock_adjustments (variant_group_id, qty_change, reason)
-                   VALUES (?, ?, 'Void/Refund')""",
-                (p["variant_group_id"], qty)
-            )
-        else:
-            con.execute(
-                "UPDATE products SET stock = stock + ? WHERE id = ?",
-                (qty, product_id)
-            )
+
+def increment_stock_batch(items):
+    """Put stock back for a whole void/refund — `items` is an iterable of
+    (product_id, qty), applied in order.
+
+    One transaction, one commit: every line is restored or (if anything fails
+    part-way) none are, so a void/refund can never leave stock half-restored —
+    the mirror of decrement_stock_batch()."""
+    items = [(pid, q) for pid, q in items if pid]
+    if not items:
+        return
+    with _conn() as con:                 # rolls back automatically on any exception
+        for pid, q in items:
+            _increment_stock_on(con, pid, q)
         con.commit()
 
 
@@ -1008,15 +1052,58 @@ def get_all_stock_adjustments(search: str = "", limit: int = 100) -> list[dict]:
         return [dict(r) for r in con.execute(q, params)]
 
 
-def get_low_stock_products(threshold: int = 5) -> list[dict]:
+def _low_stock_where(threshold: int, search: str, out_only: bool) -> tuple[str, list]:
+    where  = "p.is_case = 0 AND p.variant_group_id IS NULL AND "
+    params: list = []
+    if out_only:
+        where += "p.stock = 0"
+    else:
+        where += "p.stock <= ?"; params.append(threshold)
+    if search:
+        where += " AND LOWER(p.name) LIKE ? ESCAPE '\\'"
+        params.append(_like_literal(search.lower()))
+    return where, params
+
+
+def get_low_stock_products(threshold: int = 5, search: str = "",
+                           limit: int | None = None, offset: int = 0,
+                           out_only: bool = False) -> list[dict]:
     """Standalone/alias-member products at or below threshold. Excludes case
-    products and variant-group members (use get_low_stock_variant_groups for those)."""
+    products and variant-group members (use get_low_stock_variant_groups for those).
+
+    search     — optional product-name substring (case-insensitive, literal).
+    limit/offset — page the result in SQL. Leave limit=None only when you really
+                   need every row: a catalog where stock isn't tracked yet has
+                   EVERY product at 0, i.e. tens of thousands of rows.
+    out_only   — only products with stock exactly 0 (threshold is ignored)."""
+    where, params = _low_stock_where(threshold, search, out_only)
+    q = ("SELECT p.*, g.name AS group_name FROM products p "
+         "LEFT JOIN groups g ON g.id = p.group_id "
+         f"WHERE {where} ORDER BY p.stock ASC, p.name")
+    if limit is not None:
+        q += " LIMIT ? OFFSET ?"; params += [limit, offset]
     with _conn() as con:
-        return [dict(r) for r in con.execute(
-            """SELECT p.*, g.name AS group_name
-               FROM   products p
-               LEFT   JOIN groups g ON g.id = p.group_id
-               WHERE  p.stock <= ? AND p.is_case = 0 AND p.variant_group_id IS NULL
-               ORDER  BY p.stock ASC, p.name""",
-            (threshold,)
-        )]
+        return [dict(r) for r in con.execute(q, params)]
+
+
+def count_low_stock_products(threshold: int = 5, search: str = "",
+                             out_only: bool = False) -> int:
+    where, params = _low_stock_where(threshold, search, out_only)
+    with _conn() as con:
+        return con.execute(f"SELECT COUNT(*) FROM products p WHERE {where}", params).fetchone()[0]
+
+
+def low_stock_summary(threshold: int = 5, name_limit: int = 4) -> dict:
+    """What the Stock tab's alert banner needs, without loading every row:
+    total low (incl. out), how many are out (stock == 0), how many are merely
+    low (0 < stock <= threshold), and the first few names (lowest stock first)."""
+    where, params = _low_stock_where(threshold, "", False)
+    with _conn() as con:
+        total, out, warn = con.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(p.stock = 0), 0), "
+            f"COALESCE(SUM(p.stock > 0), 0) FROM products p WHERE {where}", params
+        ).fetchone()
+        names = [r[0] for r in con.execute(
+            f"SELECT p.name FROM products p WHERE {where} "
+            f"ORDER BY p.stock ASC, p.name LIMIT ?", params + [name_limit])]
+    return {"total": total, "out": out, "warn": warn, "names": names}

@@ -102,11 +102,64 @@ def _safe_num(receipt_number: str) -> str:
     return receipt_number.replace("#", "").replace("/", "-").strip()
 
 
+def _finalize(lines: list) -> list:
+    """Apply the receipt layout (character folding, divider, left margin, feed
+    lines) — see utils/receipt_layout.py. A layout problem must never stop a
+    receipt printing, so any error falls back to the unfinished lines."""
+    try:
+        from utils.receipt_layout import finalize_lines
+        return finalize_lines(lines)
+    except Exception as e:
+        print(f"[PrintManager] layout not applied: {e}")
+        return lines
+
+
+def _prepare_print(text: str, lines: list | None):
+    """Main-thread half of a print: read the settings (database access stays
+    on this thread). Returns (printer, build) where `build` is a zero-argument
+    function that makes the ESC/POS byte stream, or None for plain text.
+    Building is deferred to _send_to_printer because the first call loads the
+    python-escpos library (~0.35 s on a fast PC) and needs no GUI or database."""
+    from core.db_config import get as cfg_get
+    from utils.thermal_printer import ThermalPrinter
+
+    mode        = cfg_get("receipt_printer_mode", "raw").strip()
+    use_escpos  = (mode == "raw" and lines is not None
+                  and cfg_get("receipt_printer_escpos", "0").strip() == "1")
+    has_cutter  = cfg_get("receipt_printer_has_cutter", "1").strip() == "1"
+
+    build = None
+    if use_escpos:
+        from utils.escpos_builder import build_escpos_bytes
+        build = lambda: build_escpos_bytes(lines, cut=has_cutter)
+    return ThermalPrinter.from_config(), build
+
+
+def _send_to_printer(printer, text: str, build, cash_drawer: bool):
+    """The slow half: build the bytes and talk to the printer / OS spooler.
+    Raises PrinterError. Touches no GUI and no database, so it is safe to run
+    on a worker thread."""
+    data = build() if build else None      # None -> python-escpos missing -> plain text
+    with printer as p:
+        if data is not None:
+            p.print_bytes(data)
+        else:
+            p.print_text(text)
+
+        if cash_drawer:
+            try:
+                p.kick_drawer()
+            except Exception as e:
+                print(f"[PrintManager] Drawer kick failed (receipt still printed): {e}")
+
+
 def _auto_print(text: str, parent=None, lines: list | None = None,
                 cash_drawer: bool = False) -> bool:
     """
     Print without a dialog using the configured receipt printer
-    (raw passthrough or raster, per receipt_printer_mode).
+    (raw passthrough or raster, per receipt_printer_mode). Blocks until the
+    printer/spooler has accepted the job — use _auto_print_background() from
+    the checkout path so the cashier screen doesn't freeze while it waits.
 
     lines        — optional (text, kind) list from a *_lines() formatter
                    function. Only used in raw mode when
@@ -122,30 +175,10 @@ def _auto_print(text: str, parent=None, lines: list | None = None,
                    Best-effort: a failed kick never fails the receipt
                    print. Only ever pass True for a completed sale.
     """
-    from core.db_config import get as cfg_get
-    from utils.thermal_printer import ThermalPrinter, PrinterError
-
-    mode        = cfg_get("receipt_printer_mode", "raw").strip()
-    use_escpos  = (mode == "raw" and lines is not None
-                  and cfg_get("receipt_printer_escpos", "0").strip() == "1")
-    has_cutter  = cfg_get("receipt_printer_has_cutter", "1").strip() == "1"
-
+    from utils.thermal_printer import PrinterError
     try:
-        with ThermalPrinter.from_config() as p:
-            data = None
-            if use_escpos:
-                from utils.escpos_builder import build_escpos_bytes
-                data = build_escpos_bytes(lines, cut=has_cutter)
-            if data is not None:
-                p.print_bytes(data)
-            else:
-                p.print_text(text)
-
-            if cash_drawer:
-                try:
-                    p.kick_drawer()
-                except Exception as e:
-                    print(f"[PrintManager] Drawer kick failed (receipt still printed): {e}")
+        printer, build = _prepare_print(text, lines)
+        _send_to_printer(printer, text, build, cash_drawer)
         return True
     except PrinterError as e:
         print(f"[PrintManager] Auto-print error: {e}")
@@ -158,6 +191,74 @@ def _auto_print(text: str, parent=None, lines: list | None = None,
         return False
     except Exception as e:
         print(f"[PrintManager] Unexpected print error: {e}")
+        return False
+
+
+# ── Background printing ──────────────────────────────────────────────
+# A slow, offline or unreachable printer can make the spooler call block for
+# seconds. Done on the GUI thread that freezes the whole cashier screen, so
+# raw-mode receipts are sent from a single worker thread instead (one job at
+# a time, so receipts always come out in sale order). Raster mode renders with
+# QPainter, which we keep on the GUI thread, so it still prints synchronously.
+
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
+
+_pool   = None
+_bridge = None
+
+
+class _PrintBridge(QObject):
+    """Lives on the GUI thread; lets the worker report a failure safely."""
+    failed = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.failed.connect(self._show_failure)
+
+    def _show_failure(self, message: str):
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+        QMessageBox.warning(
+            QApplication.activeWindow(), "Printer Error",
+            f"{message}\n\nA text copy has been saved to the receipts folder."
+        )
+
+
+class _PrintJob(QRunnable):
+    def __init__(self, printer, text, build, cash_drawer, bridge):
+        super().__init__()
+        self._args   = (printer, text, build, cash_drawer)
+        self._bridge = bridge
+
+    def run(self):
+        from utils.thermal_printer import PrinterError
+        try:
+            _send_to_printer(*self._args)
+        except PrinterError as e:
+            print(f"[PrintManager] Auto-print error: {e}")
+            self._bridge.failed.emit(str(e))
+        except Exception as e:
+            print(f"[PrintManager] Unexpected print error: {e}")
+            self._bridge.failed.emit(f"Unexpected print error: {e}")
+
+
+def _auto_print_background(text: str, lines: list | None = None,
+                           cash_drawer: bool = False) -> bool:
+    """Queue a raw-mode print on the worker thread and return immediately.
+    Returns True if the job was queued (not whether it printed — a failure
+    is reported later with the same "Printer Error" box)."""
+    global _pool, _bridge
+    try:
+        printer, build = _prepare_print(text, lines)   # config reads stay on the GUI thread
+        if _pool is None:
+            import atexit
+            _pool = QThreadPool()
+            _pool.setMaxThreadCount(1)                 # one job at a time, in order
+            _bridge = _PrintBridge()
+            atexit.register(lambda: _pool.waitForDone(10000))  # don't drop a queued receipt on exit
+        _pool.start(_PrintJob(printer, text, build, cash_drawer, _bridge))
+        return True
+    except Exception as e:
+        print(f"[PrintManager] Could not queue print job: {e}")
         return False
 
 
@@ -234,7 +335,7 @@ def print_receipt(receipt: dict, parent=None) -> bool:
         from core.db_config import get as cfg_get
         from utils.receipt_formatter import format_sale, format_sale_lines
         biz, currency = _get_biz_and_currency()
-        lines = format_sale_lines(receipt, biz, currency)
+        lines = _finalize(format_sale_lines(receipt, biz, currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "transactions"],
@@ -244,6 +345,9 @@ def print_receipt(receipt: dict, parent=None) -> bool:
             cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
             and receipt["payment_method"] in ("cash", "split")
         )
+        if cfg_get("receipt_printer_mode", "raw").strip() == "raw":
+            # Checkout path: don't make the cashier wait for the printer.
+            return _auto_print_background(text, lines=lines, cash_drawer=cash_drawer)
         return _auto_print(text, parent, lines=lines, cash_drawer=cash_drawer)
     except Exception as e:
         print(f"[PrintManager] print_receipt error: {e}")
@@ -258,8 +362,8 @@ def print_void(receipt: dict, refund: dict,
         biz, currency = _get_biz_and_currency()
         voided_by = voided_by_user.get("full_name", "") if voided_by_user else ""
         reason    = refund.get("reason", "") if refund else ""
-        lines = format_void_lines(receipt, biz, voided_by=voided_by,
-                                  reason=reason, currency=currency)
+        lines = _finalize(format_void_lines(receipt, biz, voided_by=voided_by,
+                                            reason=reason, currency=currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "voids"],
@@ -280,9 +384,9 @@ def print_refund(receipt: dict, refund: dict,
         reason      = refund.get("reason", "") if refund else ""
         amount      = refund.get("amount", receipt.get("total", 0))
         refund_type = refund.get("refund_type", "full") if refund else "full"
-        lines = format_refund_lines(receipt, biz, refund_amount=amount,
-                                    refund_type=refund_type, refunded_by=refunded_by,
-                                    reason=reason, currency=currency)
+        lines = _finalize(format_refund_lines(receipt, biz, refund_amount=amount,
+                                              refund_type=refund_type, refunded_by=refunded_by,
+                                              reason=reason, currency=currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "refunds"],
@@ -327,13 +431,13 @@ def print_session(session: dict, report_type: str = "full",
             u = get_user_by_id(session["closed_by"])
             closed_by = u["full_name"] if u else ""
 
-        lines = format_session_lines(
+        lines = _finalize(format_session_lines(
             session, totals, cashier_name, biz,
             opened_by=opened_by, closed_by=closed_by,
             currency=currency, report_type=report_type,
             group_totals=grp_totals, voided_receipts=voided,
             all_receipts=all_receipts,
-        )
+        ))
         text = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(session.get("user_id"))
         report_folder  = _safe_folder_name(report_type)
@@ -360,7 +464,7 @@ def reprint_receipt(receipt_number: str, parent=None) -> bool:
             return False
         from utils.receipt_formatter import format_sale_lines
         biz, currency = _get_biz_and_currency()
-        lines = format_sale_lines(receipt, biz, currency)
+        lines = _finalize(format_sale_lines(receipt, biz, currency))
         text  = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
         _save_text([cashier_folder, "transactions"],
@@ -368,6 +472,49 @@ def reprint_receipt(receipt_number: str, parent=None) -> bool:
         return _auto_print(text, parent, lines=lines, cash_drawer=False)
     except Exception as e:
         print(f"[PrintManager] reprint_receipt error: {e}")
+        return False
+
+
+def print_lines(lines: list, parent=None, *, finish: bool = True,
+                feed_override=None, margin_override=None, cash_drawer: bool = False,
+                wait: bool = False) -> bool:
+    """Print an arbitrary list of (text, kind) lines — used by the test receipt and
+    the calibration wizard.
+
+    finish=True runs the normal layout pass. For calibration sheets pass
+    finish=False with feed_override/margin_override=0 so the SAVED margin and feed
+    can't distort what is being measured (characters are still folded for the
+    current mode). wait=True blocks until the printer has accepted the job (so
+    the wizard knows when it is safe to ask the next question); otherwise raw
+    mode sends it from the background worker.
+    Returns True if the job was handed to the printer (or queued)."""
+    try:
+        from core.db_config import get as cfg_get
+        from utils.receipt_layout import finalize_lines, load_layout
+        if finish:
+            lines = finalize_lines(lines)
+        else:
+            lines = finalize_lines(lines, load_layout(),
+                                   feed_override=feed_override if feed_override is not None else 0,
+                                   margin_override=margin_override if margin_override is not None else 0)
+        text = "\n".join(t for t, _k in lines)
+        raw = cfg_get("receipt_printer_mode", "raw").strip() == "raw"
+        if raw and not wait:
+            return _auto_print_background(text, lines=lines, cash_drawer=cash_drawer)
+        return _auto_print(text, parent, lines=lines, cash_drawer=cash_drawer)
+    except Exception as e:
+        print(f"[PrintManager] print_lines error: {e}")
+        return False
+
+
+def print_test_receipt(parent=None) -> bool:
+    """Print the sample sale through the real print path with the saved layout."""
+    from utils.receipt_samples import preview_lines
+    try:
+        biz, currency = _get_biz_and_currency()
+        return print_lines(preview_lines("sale", biz, currency), parent)
+    except Exception as e:
+        print(f"[PrintManager] print_test_receipt error: {e}")
         return False
 
 

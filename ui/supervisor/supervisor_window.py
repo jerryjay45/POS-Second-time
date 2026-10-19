@@ -121,9 +121,17 @@ class SupervisorWindow(BaseWindow):
             QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
             QTabBar::tab:hover{{color:{DARK_CARD};}}
         """)
-        self.tabs.addTab(self._build_products_tab(),     "📦  Products")
-        self.tabs.addTab(self._build_reports_tab(),      "📊  Reports")
-        self.tabs.addTab(self._build_transactions_tab(), "🧾  Transactions")
+        # Tabs are built the first time they are opened (not all at once at
+        # login — that took ~1.5 s with a big catalog) and refreshed each time
+        # the user comes back to them. See ui/shared/lazy_tabs.py.
+        from ui.shared.lazy_tabs import LazyTabs
+        self._lazy = LazyTabs(self.tabs)
+        self._lazy.add("products", "📦  Products", self._build_products_tab,
+                       lambda: self._load_products(self._pg_search))
+        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
+                       self._rpt_refresh_on_show)
+        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
+                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
         # The old standalone void_refund_tab.py file was retired — its
         # functionality is superseded by the inline void/refund section
         # built into this window's own tab (see _vr_* methods below),
@@ -132,12 +140,38 @@ class SupervisorWindow(BaseWindow):
         # never actually added here — only reachable via the (now deleted)
         # standalone file, and only from the Manager window. Supervisors
         # had no void/refund access at all. Adding it here fixes that.
-        self.tabs.addTab(self._build_void_tab(),         "↩  Void / Refund")
-        self.tabs.addTab(self._build_stock_tab(),        "📊  Stock")
-        self.tabs.addTab(self._build_price_tag_tab(),    "🏷  Price Tags")
-        self.tabs.addTab(self._build_quickkeys_tab(),    "⌨  Quick Keys")
-        self.tabs.setCurrentIndex(0)
+        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
+                       self._vr_refresh_on_show)
+        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
+                       lambda: self._lazy.page("stock")._refresh_all())
+        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
+                       lambda: self._lazy.page("pricetags")._load_table())
+        # Quick Keys is a form of unsaved edits, so it has no refresher.
+        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
+        self._lazy.start(0)
         return self.tabs
+
+    # ── refreshers used when a tab is shown again ───────────────────────
+    def _rpt_refresh_on_show(self):
+        """Reload the selected cashier's sessions (live totals change as sales
+        happen) and re-select the session that was being viewed."""
+        sel = getattr(self, "_rpt_selected_session_id", None)
+        self._rpt_refresh()
+        if sel is None:
+            return
+        for r in range(self.rpt_session_list.rowCount()):
+            it = self.rpt_session_list.item(r, 0)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == sel:
+                self.rpt_session_list.selectRow(r)
+                self._rpt_on_session_selected()
+                break
+
+    def _vr_refresh_on_show(self):
+        """Reload the receipt list — but not while a receipt is selected for
+        voiding/refunding, so a half-finished action is never disturbed."""
+        if self._vr_selected_tx_id is not None:
+            return
+        self._vr_load(self._vr_pg_search, self._vr_pg_status)
 
     # ================================================================
     # PRODUCTS TAB
@@ -1192,24 +1226,28 @@ class SupervisorWindow(BaseWindow):
             self._vr_on_row_selected()
             return
         if voided:
-            # Increment stock for all items in the voided receipt
-            from core.db_config import get_bool
-            if get_bool("stock_tracking", False):
-                from core.db_products import increment_stock
-                for it in (self._vr_items_data or []):
-                    if it.get("product_id"):
-                        increment_stock(it["product_id"], it["quantity"])
+            # The void is recorded. Nothing below may crash the window or make it
+            # look like the void didn't happen — report problems instead.
+            # Put stock back for all items in the voided receipt (one transaction).
+            stock_msg = self._vr_restore_stock(
+                [(it.get("product_id"), it["quantity"], it.get("product_name", ""))
+                 for it in (self._vr_items_data or [])], "void")
             # Print void notice
-            receipt = get_receipt_by_id(self._vr_selected_tx_id)
-            if receipt:
-                from core.db_checkout import get_refunds_for_receipt
-                refunds = get_refunds_for_receipt(receipt["id"])
-                refund  = refunds[0] if refunds else {"reason": reason}
-                from utils.print_manager import print_void
-                print_void(receipt, refund, voided_by_user=self.user, parent=self)
+            try:
+                receipt = get_receipt_by_id(self._vr_selected_tx_id)
+                if receipt:
+                    from core.db_checkout import get_refunds_for_receipt
+                    refunds = get_refunds_for_receipt(receipt["id"])
+                    refund  = refunds[0] if refunds else {"reason": reason}
+                    from utils.print_manager import print_void
+                    print_void(receipt, refund, voided_by_user=self.user, parent=self)
+            except Exception as e:
+                print(f"[Void] Notice not printed for receipt #{self._vr_selected_tx_id}: {e}")
             self._vr_selected_tx_status="voided"; self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
             self.vr_status_banner.setText(f"✓  Receipt #{self._vr_selected_tx_id} voided."); self.vr_status_banner.setStyleSheet(f"color:{RED};font-size:12px;font-weight:600;border:none;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
+            if stock_msg:
+                QMessageBox.warning(self, "Stock Not Updated", stock_msg)
         else: QMessageBox.critical(self, "Failed", "Could not void this receipt.")
 
     def _vr_do_refund(self):
@@ -1240,27 +1278,59 @@ class SupervisorWindow(BaseWindow):
             self._vr_on_row_selected()
             return
         if ok:
-            # Increment stock for refunded items (using the quantities actually submitted)
-            from core.db_config import get_bool
-            if get_bool("stock_tracking", False):
-                from core.db_products import increment_stock
-                by_id = {it["id"]: it for it in self._vr_items_data}
-                for entry in items:
-                    src = by_id.get(entry["receipt_item_id"])
-                    if src and src.get("product_id"):
-                        increment_stock(src["product_id"], entry["quantity"])
+            # The refund is recorded. Nothing below may crash the window or make it
+            # look like the refund didn't happen — report problems instead.
+            # Put stock back for refunded items (using the quantities actually
+            # submitted), in one transaction.
+            by_id = {it["id"]: it for it in self._vr_items_data}
+            stock_lines = []
+            for entry in items:
+                src = by_id.get(entry["receipt_item_id"])
+                if src and src.get("product_id"):
+                    stock_lines.append((src["product_id"], entry["quantity"], src.get("product_name", "")))
+            stock_msg = self._vr_restore_stock(stock_lines, "refund")
             # Print refund receipt
-            receipt = get_receipt_by_id(self._vr_selected_tx_id)
-            if receipt:
-                from core.db_checkout import get_refunds_for_receipt
-                refunds = get_refunds_for_receipt(receipt["id"])
-                refund_rec = refunds[0] if refunds else {"reason": reason, "amount": amount, "refund_type": rtype}
-                from utils.print_manager import print_refund
-                print_refund(receipt, refund_rec, refunded_by_user=self.user, parent=self)
+            try:
+                receipt = get_receipt_by_id(self._vr_selected_tx_id)
+                if receipt:
+                    from core.db_checkout import get_refunds_for_receipt
+                    refunds = get_refunds_for_receipt(receipt["id"])
+                    refund_rec = refunds[0] if refunds else {"reason": reason, "amount": amount, "refund_type": rtype}
+                    from utils.print_manager import print_refund
+                    print_refund(receipt, refund_rec, refunded_by_user=self.user, parent=self)
+            except Exception as e:
+                print(f"[Refund] Receipt not printed for #{self._vr_selected_tx_id}: {e}")
             self.vr_void_btn.setEnabled(False); self.vr_refund_btn.setEnabled(False)
             self.vr_status_banner.setText(f"✓  {mode} refund of {format_currency(amount)} issued."); self.vr_status_banner.setStyleSheet(f"color:{AMBER_TEXT_ON_LIGHT};font-size:12px;font-weight:600;border:none;"); self.vr_status_banner.setVisible(True)
             self._vr_search_fn()
+            if stock_msg:
+                QMessageBox.warning(self, "Stock Not Updated", stock_msg)
         else: QMessageBox.critical(self, "Failed", "Could not process refund.")
+
+    def _vr_restore_stock(self, lines: list, what: str):
+        """Put stock back after a void/refund that is ALREADY recorded.
+
+        lines — [(product_id, qty, product_name), ...]. All lines are restored in
+        one transaction (all or none). Returns None on success / when stock
+        tracking is off, or a message telling the supervisor exactly what to add
+        back by hand if it failed. Never raises: the void/refund has already
+        happened, so a stock error must not crash the screen or look like it
+        didn't go through."""
+        from core.db_config import get_bool
+        lines = [(pid, q, n) for pid, q, n in lines if pid]
+        try:
+            if not lines or not get_bool("stock_tracking", False):
+                return None
+            from core.db_products import increment_stock_batch
+            increment_stock_batch([(pid, q) for pid, q, _n in lines])
+            return None
+        except Exception as e:
+            print(f"[{what.title()}] Stock not restored: {e}")
+            shown = "\n".join(f"  •  {n or 'Product #' + str(pid)}  ×  {q}"
+                              for pid, q, n in lines[:8])
+            more  = f"\n  …and {len(lines) - 8} more" if len(lines) > 8 else ""
+            return (f"The {what} WAS recorded, but stock levels could not be updated "
+                    f"({e}).\n\nPlease add these back in the Stock tab:\n{shown}{more}")
 
     # ================================================================
     # QUICK KEYS TAB

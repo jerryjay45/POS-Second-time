@@ -59,6 +59,25 @@ def columns_for_width_mm(width_mm: float) -> int:
     return _KNOWN_COLUMNS[closest]
 
 
+# A receipt roll is never narrower than ~40 mm or wider than ~120 mm. A
+# Generic / Text Only queue left on "Letter", "A4" or "Envelope B4" reports
+# 216–250 mm; snapping that to the nearest receipt size (102 mm) gave far too many
+# columns. Anything outside this range is rejected as "the driver doesn't know".
+PLAUSIBLE_RECEIPT_MM = (40, 120)
+
+
+def detect_reported_width_mm(printer_name: str = "") -> int | None:
+    """Whatever width the OS driver reports, plausible or not (None if unknown)."""
+    if not printer_name:
+        return None
+    system = platform.system()
+    if system == "Windows":
+        return _detect_windows(printer_name)
+    if system == "Linux":
+        return _detect_linux(printer_name)
+    return None
+
+
 def detect_paper_width_mm(printer_name: str = "") -> int | None:
     """
     Ask the OS print driver what paper width it's configured for.
@@ -75,16 +94,10 @@ def detect_paper_width_mm(printer_name: str = "") -> int | None:
     this is a convenience, not a guarantee — the manual override always
     remains available.
     """
-    if not printer_name:
+    mm = detect_reported_width_mm(printer_name)
+    if mm is None or not (PLAUSIBLE_RECEIPT_MM[0] <= mm <= PLAUSIBLE_RECEIPT_MM[1]):
         return None
-
-    system = platform.system()
-
-    if system == "Windows":
-        return _detect_windows(printer_name)
-    elif system == "Linux":
-        return _detect_linux(printer_name)
-    return None
+    return mm
 
 
 def _detect_windows(printer_name: str) -> int | None:
@@ -125,3 +138,66 @@ def _detect_linux(printer_name: str) -> int | None:
         return None
     except Exception:
         return None
+
+
+# ── Print queues + "printer check" ───────────────────────────────────────────
+
+def list_print_queues() -> list[dict]:
+    """Installed print queues as [{'name', 'driver', 'port'}]. Windows reads them
+    with win32print; Linux uses lpstat (driver unknown). Never raises."""
+    system = platform.system()
+    out: list[dict] = []
+    try:
+        if system == "Windows":
+            import win32print
+            flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+            for p in win32print.EnumPrinters(flags, None, 2):
+                out.append({"name": p.get("pPrinterName", ""),
+                            "driver": p.get("pDriverName", ""),
+                            "port": p.get("pPortName", "")})
+        elif system == "Linux":
+            import subprocess
+            proc = subprocess.run(["lpstat", "-v"], capture_output=True, text=True, timeout=5)
+            for line in proc.stdout.splitlines():
+                m = re.match(r"device for (.+?):\s*(.*)$", line.strip())
+                if m:
+                    out.append({"name": m.group(1), "driver": "", "port": m.group(2)})
+    except Exception:
+        return out
+    return out
+
+
+def check_queue(name: str, mode: str, queues: list[dict] | None = None) -> list[tuple[str, str]]:
+    """Plain-language findings about the chosen print queue: [(severity, text)],
+    severity 'ok' | 'info' | 'warn'. `queues` can be passed in (tests)."""
+    qs = list_print_queues() if queues is None else queues
+    notes: list[tuple[str, str]] = []
+    if not name.strip():
+        notes.append(("info", "No printer chosen: receipts go to the Windows default printer."))
+        return notes
+    q = next((x for x in qs if x["name"].strip().lower() == name.strip().lower()), None)
+    if q is None:
+        if qs:
+            notes.append(("warn", f"'{name}' is not one of the installed printers. "
+                                  "Pick it from the list so receipts don't go nowhere."))
+        else:
+            notes.append(("info", "Could not list the installed printers on this PC."))
+        return notes
+    drv = (q.get("driver") or "").lower()
+    text_only = "text only" in drv or drv.startswith("generic")
+    port = q.get("port", "")
+    if mode == "raster" and text_only:
+        notes.append(("warn", f"'{q['name']}' uses a Generic / Text Only driver, which cannot print "
+                              "graphics. Switch the print mode to Raw (plain text)."))
+    elif mode == "raw" and text_only:
+        notes.append(("ok", "Generic / Text Only driver with raw printing: the receipt is sent "
+                            "straight to the printer. The queue's page size is ignored."))
+    elif mode == "raw":
+        notes.append(("ok", f"Raw printing: bytes go straight to the printer, so the driver's "
+                            f"page size and margins don't apply ({q.get('driver') or 'driver unknown'})."))
+    else:
+        notes.append(("ok", f"Raster printing through '{q.get('driver') or 'the driver'}'. "
+                            "The page size is set from the paper-width setting."))
+    if port:
+        notes.append(("info", f"Connected on {port}."))
+    return notes

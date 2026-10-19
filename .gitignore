@@ -4,3 +4,8 @@ data/
 *.db
 *.db-wal
 *.db-shm
+build_win/
+dist/
+labels/
+receipts/
+build/

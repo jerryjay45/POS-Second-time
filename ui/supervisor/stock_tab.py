@@ -18,6 +18,7 @@ from ui.shared.theme import (
 from core.db_products import (
     get_products, count_products, adjust_stock,
     get_all_stock_adjustments, get_low_stock_products,
+    count_low_stock_products, low_stock_summary,
     get_stock_adjustments, get_product_by_id,
     get_variant_groups, adjust_variant_group_stock, get_low_stock_variant_groups,
 )
@@ -602,20 +603,21 @@ class StockTab(QWidget):
         self._refresh_alert()
 
     def _refresh_alert(self):
-        low = get_low_stock_products(self._threshold)
+        # Counts + first few names come from SQL: a catalog whose stock isn't
+        # tracked yet has EVERY product at 0, and loading all of them just to
+        # show "N out of stock" cost ~350 ms per refresh at 43k products.
+        low = low_stock_summary(self._threshold)
         low_pool = get_low_stock_variant_groups(self._threshold)
-        if not low and not low_pool:
+        if not low["total"] and not low_pool:
             self.alert_frame.setVisible(False); return
-        out  = [p for p in low if p["stock"] == 0]
-        warn = [p for p in low if 0 < p["stock"] <= self._threshold]
         parts = []
-        if out:       parts.append(f"{len(out)} out of stock")
-        if warn:      parts.append(f"{len(warn)} low (≤{self._threshold})")
-        if low_pool:  parts.append(f"{len(low_pool)} variant group{'s' if len(low_pool) != 1 else ''} low")
-        names = ", ".join(p["name"] for p in low[:4])
+        if low["out"]:   parts.append(f"{low['out']} out of stock")
+        if low["warn"]:  parts.append(f"{low['warn']} low (≤{self._threshold})")
+        if low_pool:     parts.append(f"{len(low_pool)} variant group{'s' if len(low_pool) != 1 else ''} low")
+        names = ", ".join(low["names"])
         if low_pool:
             names += (", " if names else "") + ", ".join(g["name"] for g in low_pool[:2])
-        if len(low) + len(low_pool) > 5: names += f"  +{len(low)+len(low_pool)-5} more"
+        if low["total"] + len(low_pool) > 5: names += f"  +{low['total']+len(low_pool)-5} more"
         self.alert_lbl.setText(f"{' · '.join(parts)}:  {names}")
         self.alert_frame.setVisible(True)
 
@@ -714,14 +716,18 @@ class StockTab(QWidget):
         search = self._pg_search
         flt    = self.filter_combo.currentIndex()
 
-        if flt == 2:
-            products = [p for p in get_low_stock_products(0) if p["stock"] == 0]
-            if search: products = [p for p in products if search.lower() in p["name"].lower()]
-            total = len(products); pages = 1
-        elif flt == 1:
-            products = get_low_stock_products(self._threshold)
-            if search: products = [p for p in products if search.lower() in p["name"].lower()]
-            total = len(products); pages = 1
+        if flt in (1, 2):
+            # Low Stock / Out of Stock. Paged in SQL (50 rows at a time) — a
+            # catalog with stock untracked has every product at 0, and building
+            # a table row (with buttons) for each took ~50 s and >3 GB at 43k.
+            out_only = (flt == 2)
+            thr      = 0 if out_only else self._threshold
+            total    = count_low_stock_products(thr, search, out_only)
+            pages    = max(1, (total + self._pg_per_page - 1) // self._pg_per_page)
+            self._pg_page = min(self._pg_page, pages - 1)
+            products = get_low_stock_products(thr, search, limit=self._pg_per_page,
+                                              offset=self._pg_page * self._pg_per_page,
+                                              out_only=out_only)
         else:
             total    = count_products(search=search, exclude_cases=True)
             pages    = max(1, (total + self._pg_per_page - 1) // self._pg_per_page)
@@ -745,7 +751,7 @@ class StockTab(QWidget):
             grp.setForeground(QColor(MUTED)); grp.setTextAlignment(C)
             self.stock_table.setItem(row, 1, grp)
 
-            stock = p.get("effective_stock", 0)
+            stock = p.get("effective_stock", p.get("stock", 0))
             color = _stock_color(stock, self._threshold)
             label = "Out" if stock == 0 else (f"{stock} ⚠" if stock <= self._threshold else str(stock))
             si = QTableWidgetItem(label)
@@ -780,8 +786,8 @@ class StockTab(QWidget):
             self.stock_table.setCellWidget(row, 3, act)
 
         self._pg_label.setText(f"Page {self._pg_page+1} of {pages}  ({total})")
-        self._pg_prev.setEnabled(self._pg_page > 0 and flt == 0)
-        self._pg_next.setEnabled(self._pg_page < pages - 1 and flt == 0)
+        self._pg_prev.setEnabled(self._pg_page > 0)
+        self._pg_next.setEnabled(self._pg_page < pages - 1)
 
     def _open_adjust_dialog(self, product_id: int, product_name: str):
         """Open the pop-up stock-adjustment dialog for a single product —

@@ -87,6 +87,19 @@ _DEFAULTS = {
     "label_printer_name":     "",
     "receipt_printer_escpos": "0",         # "1" = send real ESC/POS commands (bold headers/totals, paper cut) instead of plain ASCII — raw mode only, needs an ESC/POS-capable printer
     "receipt_printer_has_cutter": "1",     # "1" = printer has an automatic cutter, safe to send the cut command in ESC/POS mode. "0" for cutter-less printers (e.g. dot matrix TM-U220) — sending cut to a printer that can't cut risks garbled trailing output
+    # Receipt layout (see utils/receipt_layout.py). HARDWARE settings are per printer/PC;
+    # SHARED settings are the receipt's look and are the same on every terminal.
+    "receipt_columns":        "",           # "" = from paper width; otherwise measured by the calibration wizard
+    "receipt_left_margin":    "0",          # blank columns on the left
+    "receipt_feed_lines":     "",           # "" = legacy 2 blank lines; otherwise blank lines fed after each receipt
+    "receipt_form_feed":      "1",          # "1" = plain-text raw jobs end with a form feed
+    "receipt_show_address":   "1",          # SHARED: header lines shown on the receipt
+    "receipt_show_phone":     "1",
+    "receipt_show_trn":       "1",
+    "receipt_show_cashier":   "1",
+    "receipt_header_extra":   "",           # SHARED: extra centred lines under the business details
+    "receipt_footer_extra":   "",           # SHARED: extra centred lines under the footer message
+    "receipt_divider":        "-",          # SHARED: divider character
     "cash_drawer_kick_on_cash_sale": "0",  # "1" = send the cash-drawer-open pulse after a cash/split-tender sale. Sent as its own short raw job regardless of print mode — works with raw or raster receipts, as long as the drawer is wired through the receipt printer
 
     # PostgreSQL external DB (mirrors config.py but persisted here)
@@ -210,6 +223,26 @@ def set_many(pairs: dict):
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [(k, str(v)) for k, v in pairs.items()]
         )
+        con.commit()
+
+
+def apply_setup(settings: dict, business: dict | None = None):
+    """Write settings (and optionally business details) in ONE transaction —
+    either everything is applied or, on any error, nothing is. Used by the
+    receipt-setup import."""
+    with _conn() as con:
+        con.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [(k, str(v)) for k, v in settings.items()]
+        )
+        if business:
+            allowed = {"name", "address", "phone", "tax_id", "receipt_footer"}
+            fields = {k: v.strip().upper() for k, v in business.items()
+                      if k in allowed and isinstance(v, str)}
+            if fields:
+                parts = ", ".join(f"{k} = ?" for k in fields)
+                con.execute(f"UPDATE business SET {parts} WHERE id = 1", list(fields.values()))
         con.commit()
 
 
