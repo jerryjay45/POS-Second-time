@@ -144,7 +144,17 @@ def _ts(dt_str: str) -> str:
 
 def _header(biz: dict, width: int) -> list[Line]:
     lay = _layout()
-    lines: list[Line] = [(_center(biz.get("name", "POS System"), width), "biz_name")]
+    name = biz.get("name", "POS System")
+    lines: list[Line] = []
+    if lay.escpos and lay.heading_size == "double":
+        # Double-WIDTH characters take two columns each, so a name only has HALF the
+        # line. Centring it across the full width (as before) made anything longer
+        # than ~20 characters wrap mid-word into huge, broken lines on the printer.
+        half = max(8, width // 2)
+        for l in _wrap(str(name), half):
+            lines.append((_center(l, half), "biz_name"))
+    else:
+        lines.append((_center(name, width), "biz_name"))
     if lay.show_address and biz.get("address"):
         for l in _wrap(biz["address"], width):
             lines.append((_center(l, width), "normal"))

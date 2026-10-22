@@ -131,7 +131,13 @@ def _prepare_print(text: str, lines: list | None):
     build = None
     if use_escpos:
         from utils.escpos_builder import build_escpos_bytes
-        build = lambda: build_escpos_bytes(lines, cut=has_cutter)
+        # Sizes come from the saved layout; read here (GUI thread) so the worker
+        # thread that builds the bytes never touches the database.
+        from utils.receipt_layout import load_layout
+        lay = load_layout()
+        font, heading, total = lay.font, lay.heading_size, lay.total_size
+        build = lambda: build_escpos_bytes(lines, cut=has_cutter, font=font,
+                                           heading=heading, total=total)
     return ThermalPrinter.from_config(), build
 
 

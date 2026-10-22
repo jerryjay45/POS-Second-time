@@ -93,6 +93,10 @@ _DEFAULTS = {
     "receipt_left_margin":    "0",          # blank columns on the left
     "receipt_feed_lines":     "",           # "" = legacy 2 blank lines; otherwise blank lines fed after each receipt
     "receipt_form_feed":      "1",          # "1" = plain-text raw jobs end with a form feed
+    "receipt_font":           "a",          # ESC/POS font: "a" standard, "b" compact (HARDWARE)
+    "receipt_raster_font_pt":  "",          # raster mode point size; "" = fit the columns (HARDWARE)
+    "receipt_heading_size":   "normal",     # SHARED: business name size — normal | tall | double (ESC/POS only)
+    "receipt_total_size":     "normal",     # SHARED: TOTAL line size — normal | tall (ESC/POS only)
     "receipt_show_address":   "1",          # SHARED: header lines shown on the receipt
     "receipt_show_phone":     "1",
     "receipt_show_trn":       "1",

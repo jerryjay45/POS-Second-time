@@ -44,15 +44,32 @@ def configure_raster_page(printer, width_mm: float, length_mm: float = RASTER_RO
     printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
 
 
-def fit_font_to_columns(font, painter, printer, columns: int, pad_px: int = 20):
-    """Shrink/grow `font` so `columns` characters fit across the printable width
-    (the previous fixed 9 pt only happened to fit one paper size)."""
+RASTER_MAX_FONT_PT = 12.0         # a receipt never needs bigger than this
+
+
+def fit_font_to_columns(font, painter, printer, columns: int, pad_px: int = 20,
+                        paper_width_mm: float | None = None):
+    """Shrink/grow `font` so `columns` characters fit across the printable width.
+
+    The width used is the *smaller* of what the driver reports and the paper
+    width configured in the receipt settings. Without that cap, a queue left on
+    Letter/A4 reports a page 200+ mm wide, the search grows the font until 40
+    columns fill it, and the receipt prints huge. The point size is also capped
+    at RASTER_MAX_FONT_PT as a last line of defence."""
     from PyQt6.QtGui import QFontMetrics
-    page_w = printer.pageRect(printer.Unit.DevicePixel).width() - pad_px
+    page_w = printer.pageRect(printer.Unit.DevicePixel).width()
+    if paper_width_mm:
+        try:
+            dpi = printer.resolution()
+            if dpi > 0:
+                page_w = min(page_w, float(paper_width_mm) / 25.4 * dpi)
+        except Exception:
+            pass
+    page_w -= pad_px
     if page_w <= 0 or columns <= 0:
         return font
     sample = "0" * int(columns)
-    lo, hi, best = 4.0, 24.0, 9.0
+    lo, hi, best = 4.0, RASTER_MAX_FONT_PT, 9.0
     for _ in range(14):                       # binary search on point size
         mid = (lo + hi) / 2
         font.setPointSizeF(mid)
@@ -76,13 +93,15 @@ class ThermalPrinter:
 
     def __init__(self, printer_name: str = "", copies: int = 1,
                  mode: str = "raw", form_feed: bool = True,
-                 paper_width_mm: float = 76, columns: int = 40):
+                 paper_width_mm: float = 76, columns: int = 40,
+                 raster_pt: int | None = None):
         self._name   = printer_name.strip()
         self._copies = max(1, copies)
         self._mode   = mode if mode in ("raw", "raster") else "raw"
         self._form_feed = form_feed
         self._paper_width_mm = paper_width_mm
         self._columns = columns
+        self._raster_pt = raster_pt          # None = fit the columns to the paper
 
     # ── Factory ───────────────────────────────────────────────────────
 
@@ -96,15 +115,15 @@ class ThermalPrinter:
             copies = int(cfg_get("receipt_copies", "1") or "1")
         except Exception:
             name, mode, copies = "", "raw", 1
-        form_feed, mm, cols = True, 76, 40
+        form_feed, mm, cols, pt = True, 76, 40, None
         try:
             from utils.receipt_layout import load_layout
             lay = load_layout()
-            form_feed, cols = lay.form_feed, lay.columns
+            form_feed, cols, pt = lay.form_feed, lay.columns, lay.raster_pt
             mm = float(cfg_get("receipt_paper_width_mm", "76") or 76)
         except Exception:
             pass
-        return cls(name, copies, mode, form_feed, mm, cols)
+        return cls(name, copies, mode, form_feed, mm, cols, pt)
 
     # ── Context manager ───────────────────────────────────────────────
 
@@ -261,7 +280,11 @@ class ThermalPrinter:
 
             font = QFont("Courier New", 9)
             font.setStyleHint(QFont.StyleHint.Monospace)
-            fit_font_to_columns(font, painter, printer, self._columns)
+            if self._raster_pt:                       # a fixed size chosen in the Receipt tab
+                font.setPointSizeF(float(self._raster_pt))
+            else:                                     # fit the columns, capped by the paper width
+                fit_font_to_columns(font, painter, printer, self._columns,
+                                    paper_width_mm=self._paper_width_mm)
             painter.setFont(font)
 
             fm        = painter.fontMetrics()
