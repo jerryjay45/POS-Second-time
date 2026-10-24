@@ -9,7 +9,6 @@ print_void(receipt, refund, user, parent)   — dialog for supervisor
 print_refund(receipt, refund, user, parent) — dialog for supervisor
 print_session(session, ..., parent)         — dialog for supervisor
 reprint_receipt(receipt_number, parent)     — auto-prints to receipt printer
-print_label(product, copies, printer, parent) — stub for future cash tab
 
 Routing
 -------
@@ -514,11 +513,16 @@ def print_lines(lines: list, parent=None, *, finish: bool = True,
 
 
 def print_test_receipt(parent=None) -> bool:
-    """Print the sample sale through the real print path with the saved layout."""
+    """Print the sample sale through the real print path with the saved layout.
+
+    The sample is a sale, so it also fires the cash drawer when that option is
+    on - this is how the drawer is tested from the settings screen."""
+    from core.db_config import get as cfg_get
     from utils.receipt_samples import preview_lines
     try:
         biz, currency = _get_biz_and_currency()
-        return print_lines(preview_lines("sale", biz, currency), parent)
+        kick = cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
+        return print_lines(preview_lines("sale", biz, currency), parent, cash_drawer=kick)
     except Exception as e:
         print(f"[PrintManager] print_test_receipt error: {e}")
         return False
@@ -568,17 +572,3 @@ def _log_drawer_open(authorized_by: dict):
             f.write(line)
     except Exception as e:
         print(f"[PrintManager] Could not write drawer log: {e}")
-
-
-def print_label(product: dict, copies: int = 1,
-                printer_name: str = "", parent=None) -> bool:
-    """Stub — label printing handled by price tag tab UI."""
-    try:
-        from core.db_config import get as cfg_get
-        if not printer_name:
-            printer_name = cfg_get("label_printer_name", "")
-        print(f"[Label] {product['name']} x{copies} → {printer_name or 'no printer'}")
-        return True
-    except Exception as e:
-        print(f"[PrintManager] Label print error: {e}")
-        return False
