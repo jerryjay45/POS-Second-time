@@ -84,7 +84,6 @@ _DEFAULTS = {
     "receipt_printer_mode":   "raw",       # "raw" (dot matrix / thermal passthrough) or "raster" (QPrinter graphics)
     "receipt_paper_width_mm": "76",        # physical paper width in mm — drives column count
     "receipt_copies":         "1",
-    "label_printer_name":     "",
     "receipt_printer_escpos": "0",         # "1" = send real ESC/POS commands (bold headers/totals, paper cut) instead of plain ASCII — raw mode only, needs an ESC/POS-capable printer
     "receipt_printer_has_cutter": "1",     # "1" = printer has an automatic cutter, safe to send the cut command in ESC/POS mode. "0" for cutter-less printers (e.g. dot matrix TM-U220) — sending cut to a printer that can't cut risks garbled trailing output
     # Receipt layout (see utils/receipt_layout.py). HARDWARE settings are per printer/PC;

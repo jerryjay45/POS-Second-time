@@ -172,6 +172,17 @@ class ReceiptDesignerTab(QWidget):
         self.cutter_cb = make_checkbox("Printer has an automatic paper cutter", True)
         bl.addWidget(self.escpos_cb)
         bl.addWidget(self.cutter_cb)
+
+        self.drawer_cb = make_checkbox("Open the cash drawer on cash / split-tender sales", False)
+        bl.addWidget(self.drawer_cb)
+        bl.addWidget(_hint("The drawer must be plugged into the receipt printer. It opens with its own "
+                           "short command, so it works in Raw and Raster mode, with or without "
+                           "ESC/POS formatting."))
+        bl.addWidget(_lbl("Copies per sale"))
+        self.copies_spin = QSpinBox()
+        self.copies_spin.setRange(1, 5)
+        self.copies_spin.setStyleSheet(_INPUT)
+        bl.addWidget(self.copies_spin)
         left.addWidget(box)
 
         # ---- Paper & feed ----
@@ -379,10 +390,10 @@ class ReceiptDesignerTab(QWidget):
                     self.cols_spin.valueChanged, self.margin_spin.valueChanged,
                     self.feed_spin.valueChanged, self.div_combo.currentIndexChanged,
                     self.printer_combo.currentTextChanged, self.header_edit.textChanged,
-                    self.footer_edit.textChanged):
+                    self.footer_edit.textChanged, self.copies_spin.valueChanged):
             sig.connect(self._changed)
-        for cb in (self.escpos_cb, self.cutter_cb, self.feed_cb, self.ff_cb, self.addr_cb,
-                   self.phone_cb, self.trn_cb, self.cashier_cb):
+        for cb in (self.escpos_cb, self.cutter_cb, self.drawer_cb, self.feed_cb, self.ff_cb,
+                   self.addr_cb, self.phone_cb, self.trn_cb, self.cashier_cb):
             cb.toggled.connect(self._changed)
         self.kind_combo.currentIndexChanged.connect(lambda _i: self._timer.start())
         self.feed_cb.toggled.connect(lambda on: self.feed_spin.setEnabled(on))
@@ -398,8 +409,10 @@ class ReceiptDesignerTab(QWidget):
     # ══════════════════════════════════════════════════════════════════
     def _collect(self) -> dict[str, str]:
         """All settings, taking the on-screen values (unsaved) over the saved ones."""
-        v = IO.current_values()                      # keeps copies / cash-drawer which live elsewhere
+        v = IO.current_values()                      # start from the saved values
         v.update({
+            "receipt_copies": str(self.copies_spin.value()),
+            "cash_drawer_kick_on_cash_sale": "1" if self.drawer_cb.isChecked() else "0",
             "receipt_printer_name": self.printer_combo.currentText().strip(),
             "receipt_printer_mode": self.mode_combo.currentData(),
             "receipt_paper_width_mm": str(self.width_combo.currentData()),
@@ -450,6 +463,9 @@ class ReceiptDesignerTab(QWidget):
             self.ff_cb.setChecked(g("receipt_form_feed") != "0")
             self.escpos_cb.setChecked(g("receipt_printer_escpos") == "1")
             self.cutter_cb.setChecked(g("receipt_printer_has_cutter") != "0")
+            self.drawer_cb.setChecked(g("cash_drawer_kick_on_cash_sale") == "1")
+            ok, n, _ = RL.validate_value("receipt_copies", g("receipt_copies"))
+            self.copies_spin.setValue(int(n) if ok and n else 1)
             self.addr_cb.setChecked(g("receipt_show_address") != "0")
             self.phone_cb.setChecked(g("receipt_show_phone") != "0")
             self.trn_cb.setChecked(g("receipt_show_trn") != "0")
