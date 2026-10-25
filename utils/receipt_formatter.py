@@ -518,12 +518,16 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
         lines.append((_center("VOIDED TRANSACTIONS", w), "title"))
         lines.append((_div(w, "-"), "div"))
         for v in voided_receipts:
-            lines.append((_right(
-                f"  {v['receipt_number']}  {_ts(v['created_at'])}",
-                _cur(v["total"], currency), w
-            ), "normal"))
-            if v.get("reason"):
-                lines.append((f"    Reason: {v['reason'][:30]}", "normal"))
+            label = f"  {v['receipt_number']}  {_ts(v['created_at'])}"
+            amount = _cur(v["total"], currency)
+            if len(label) + len(amount) + 1 <= w:
+                lines.append((_right(label, amount, w), "normal"))
+            else:                       # narrow paper (e.g. 57 mm): the date goes on its own line
+                lines.append((_right(f"  {v['receipt_number']}", amount, w), "normal"))
+                lines.append((f"    {_ts(v['created_at'])}", "normal"))
+            if v.get("reason"):         # wrapped, so a long reason can't run off the paper
+                for part in _wrap(f"Reason: {v['reason'][:30]}", max(10, w - 4)):
+                    lines.append((f"    {part.lstrip()}", "normal"))
         lines.append((_div(w), "div"))
     elif void > 0:
         lines.append((_center(f"({void} voided transaction{'s' if void != 1 else ''} — no details)", w), "normal"))

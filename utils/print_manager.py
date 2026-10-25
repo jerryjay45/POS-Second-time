@@ -512,17 +512,18 @@ def print_lines(lines: list, parent=None, *, finish: bool = True,
         return False
 
 
-def print_test_receipt(parent=None) -> bool:
-    """Print the sample sale through the real print path with the saved layout.
+def print_test_receipt(parent=None, kind: str = "sale") -> bool:
+    """Print a sample (sale, void, refund or one of the session reports) through the
+    real print path with the saved layout.
 
-    The sample is a sale, so it also fires the cash drawer when that option is
-    on - this is how the drawer is tested from the settings screen."""
+    Only the sale sample fires the cash drawer (when that option is on), exactly like a
+    real sale - this is how the drawer is tested from the settings screen."""
     from core.db_config import get as cfg_get
     from utils.receipt_samples import preview_lines
     try:
         biz, currency = _get_biz_and_currency()
-        kick = cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
-        return print_lines(preview_lines("sale", biz, currency), parent, cash_drawer=kick)
+        kick = kind == "sale" and cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
+        return print_lines(preview_lines(kind, biz, currency), parent, cash_drawer=kick)
     except Exception as e:
         print(f"[PrintManager] print_test_receipt error: {e}")
         return False

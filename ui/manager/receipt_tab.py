@@ -1,13 +1,15 @@
 """
 Receipt designer tab (Manager window).
 
-Left: the settings, in three groups —
-    Printer (this PC)  : printer type profile, Windows queue, print mode, ESC/POS, cutter
+Left: the everyday settings —
+    Printer (this PC)  : printer type profile, Windows queue, print mode, cash drawer, copies
     Paper (this PC)    : paper width, Calibrate printer, and the "Advanced settings" button
-    Advanced (pop-up)  : columns, left margin, paper fed after printing, form feed (what the
-                         calibration wizard tunes) and Export / Import / Reset
-    Text size          : ESC/POS font (A/B), business-name and TOTAL size, graphics-mode font size
     Receipt content    : which header lines show, extra header/footer lines, divider style
+Advanced settings (pop-up, non-modal so the preview stays visible):
+    Printer commands   : ESC/POS formatting, automatic cutter
+    Text size          : ESC/POS font (A/B), business-name and TOTAL size, graphics-mode font size
+    Paper tuning       : columns, left margin, paper fed after printing, form feed
+    Backup & restore   : export / import / reset
 Right: a live preview built by the same code that prints, using the UNSAVED settings.
 
 Printer settings belong to this PC; the content settings are the receipt's look
@@ -170,11 +172,6 @@ class ReceiptDesignerTab(QWidget):
         self.mode_combo.addItem("Raster — graphics through the Windows driver", "raster")
         self.mode_combo.setStyleSheet(_INPUT)
         bl.addWidget(self.mode_combo)
-        self.escpos_cb = make_checkbox("Send ESC/POS formatting (bold business name, headings and totals)", False)
-        self.cutter_cb = make_checkbox("Printer has an automatic paper cutter", True)
-        bl.addWidget(self.escpos_cb)
-        bl.addWidget(self.cutter_cb)
-
         self.drawer_cb = make_checkbox("Open the cash drawer on cash / split-tender sales", False)
         bl.addWidget(self.drawer_cb)
         bl.addWidget(_hint("The drawer must be plugged into the receipt printer. It opens with its own "
@@ -216,38 +213,6 @@ class ReceiptDesignerTab(QWidget):
         bl.addWidget(self.adv_btn)
         self.adv_summary = _hint("")
         bl.addWidget(self.adv_summary)
-        left.addWidget(box)
-
-        # ---- Text size ----
-        box, bl = _card("Text size")
-        bl.addWidget(_lbl("Font"))
-        self.font_combo = QComboBox()
-        self.font_combo.addItem("Normal — Font A (the printer's standard)", "a")
-        self.font_combo.addItem("Compact — Font B (smaller text, more columns)", "b")
-        self.font_combo.setStyleSheet(_INPUT)
-        bl.addWidget(self.font_combo)
-        bl.addWidget(_lbl("Business name size"))
-        self.heading_combo = QComboBox()
-        self.heading_combo.addItem("Normal (bold)", "normal")
-        self.heading_combo.addItem("Tall (double height)", "tall")
-        self.heading_combo.addItem("Large (double height and width)", "double")
-        self.heading_combo.setStyleSheet(_INPUT)
-        bl.addWidget(self.heading_combo)
-        bl.addWidget(_lbl("TOTAL line size"))
-        self.total_combo = QComboBox()
-        self.total_combo.addItem("Normal (bold)", "normal")
-        self.total_combo.addItem("Tall (double height)", "tall")
-        self.total_combo.setStyleSheet(_INPUT)
-        bl.addWidget(self.total_combo)
-        bl.addWidget(_lbl("Font size in graphics (raster) mode"))
-        self.raster_pt_spin = QSpinBox()
-        self.raster_pt_spin.setRange(4, 14)
-        self.raster_pt_spin.setSpecialValueText("Auto — fit the columns")
-        self.raster_pt_spin.setSuffix(" pt")
-        self.raster_pt_spin.setStyleSheet(_INPUT)
-        bl.addWidget(self.raster_pt_spin)
-        self.size_hint = _hint("")
-        bl.addWidget(self.size_hint)
         left.addWidget(box)
 
         # ---- Content ----
@@ -294,6 +259,9 @@ class ReceiptDesignerTab(QWidget):
         self.kind_combo.addItem("Sale receipt", "sale")
         self.kind_combo.addItem("Void notice", "void")
         self.kind_combo.addItem("Refund receipt", "refund")
+        self.kind_combo.addItem("Report — full Z-report", "report_full")
+        self.kind_combo.addItem("Report — product summary", "report_products")
+        self.kind_combo.addItem("Report — session summary", "report_summary")
         self.kind_combo.setStyleSheet(_INPUT)
         top.addWidget(self.kind_combo)
         top.addStretch()
@@ -341,10 +309,10 @@ class ReceiptDesignerTab(QWidget):
         r1 = QHBoxLayout()
         self.save_btn = _btn("Save", primary=True)
         self.save_btn.clicked.connect(self.save)
-        test = _btn("Print test receipt")
-        test.clicked.connect(self._print_test)
+        self.test_btn = _btn("Print test receipt")
+        self.test_btn.clicked.connect(self._print_test)
         r1.addWidget(self.save_btn)
-        r1.addWidget(test)
+        r1.addWidget(self.test_btn)
         r1.addStretch()
         rl.addLayout(r1)
 
@@ -362,12 +330,16 @@ class ReceiptDesignerTab(QWidget):
                     self.footer_edit.textChanged, self.copies_spin.valueChanged):
             sig.connect(self._changed)
         for sig in (self.cols_spin.valueChanged, self.margin_spin.valueChanged,
-                    self.feed_spin.valueChanged, self.feed_cb.toggled, self.ff_cb.toggled):
+                    self.feed_spin.valueChanged, self.feed_cb.toggled, self.ff_cb.toggled,
+                    self.escpos_cb.toggled, self.cutter_cb.toggled, self.mode_combo.currentIndexChanged,
+                    self.font_combo.currentIndexChanged, self.heading_combo.currentIndexChanged,
+                    self.total_combo.currentIndexChanged, self.raster_pt_spin.valueChanged):
             sig.connect(self._update_adv_summary)
         for cb in (self.escpos_cb, self.cutter_cb, self.drawer_cb, self.feed_cb, self.ff_cb,
                    self.addr_cb, self.phone_cb, self.trn_cb, self.cashier_cb):
             cb.toggled.connect(self._changed)
         self.kind_combo.currentIndexChanged.connect(lambda _i: self._timer.start())
+        self.kind_combo.currentIndexChanged.connect(lambda _i: self._update_test_label())
         self.feed_cb.toggled.connect(lambda on: self.feed_spin.setEnabled(on))
         self.mode_combo.currentIndexChanged.connect(self._update_printer_check)
         self.mode_combo.currentIndexChanged.connect(lambda _i: self._update_size_controls())
@@ -560,18 +532,76 @@ class ReceiptDesignerTab(QWidget):
 
     def _build_advanced_dialog(self):
         """The Advanced pop-up. Non-modal on purpose: the live preview stays visible beside
-        it, and every change is unsaved until Save is pressed - exactly like the main tab."""
+        it, and every change is unsaved until Save is pressed - exactly like the main tab.
+        The widgets are plain attributes of this tab (just parented here), so saving,
+        loading, profiles, the calibration wizard and the preview all work unchanged."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Advanced receipt settings")
         dlg.setModal(False)
-        dlg.setMinimumWidth(420)
+        dlg.resize(560, 700)
         dlg.setStyleSheet(f"QDialog{{background:{WHITE};}}")
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(16, 14, 16, 14)
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"QScrollArea{{background:{WHITE};border:none;}}")
+        body = QWidget()
+        body.setStyleSheet(f"background:{WHITE};")
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(16, 14, 16, 8)
         lay.setSpacing(12)
-        lay.addWidget(_hint("Normally set for you by “Calibrate printer…”. Changes show in the preview "
-                            "straight away; press Save on the Receipt tab to keep them."))
+        scroll.setWidget(body)
+        outer.addWidget(scroll, stretch=1)
+        lay.addWidget(_hint("Changes show in the preview straight away; press Save on the Receipt tab "
+                            "to keep them. Paper tuning is normally set for you by “Calibrate printer…”."))
 
+        # ---- Printer commands ----
+        box, bl = _card("Printer commands (this PC)")
+        self.escpos_cb = make_checkbox("Send ESC/POS formatting (bold business name, headings and totals)", False)
+        self.cutter_cb = make_checkbox("Printer has an automatic paper cutter", True)
+        bl.addWidget(self.escpos_cb)
+        bl.addWidget(self.cutter_cb)
+        bl.addWidget(_hint("ESC/POS unlocks bold and the text sizes below (Raw mode only). Untick the cutter "
+                           "for printers that can't cut, such as dot-matrix models - a cut command sent to "
+                           "them can spoil the end of the receipt."))
+        lay.addWidget(box)
+
+        # ---- Text size ----
+        box, bl = _card("Text size")
+        bl.addWidget(_lbl("Font"))
+        self.font_combo = QComboBox()
+        self.font_combo.addItem("Normal — Font A (the printer's standard)", "a")
+        self.font_combo.addItem("Compact — Font B (smaller text, more columns)", "b")
+        self.font_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.font_combo)
+        bl.addWidget(_lbl("Business name size"))
+        self.heading_combo = QComboBox()
+        self.heading_combo.addItem("Normal (bold)", "normal")
+        self.heading_combo.addItem("Tall (double height)", "tall")
+        self.heading_combo.addItem("Large (double height and width)", "double")
+        self.heading_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.heading_combo)
+        bl.addWidget(_lbl("TOTAL line size"))
+        self.total_combo = QComboBox()
+        self.total_combo.addItem("Normal (bold)", "normal")
+        self.total_combo.addItem("Tall (double height)", "tall")
+        self.total_combo.setStyleSheet(_INPUT)
+        bl.addWidget(self.total_combo)
+        bl.addWidget(_lbl("Font size in graphics (raster) mode"))
+        self.raster_pt_spin = QSpinBox()
+        self.raster_pt_spin.setRange(4, 14)
+        self.raster_pt_spin.setSpecialValueText("Auto — fit the columns")
+        self.raster_pt_spin.setSuffix(" pt")
+        self.raster_pt_spin.setStyleSheet(_INPUT)
+        bl.addWidget(self.raster_pt_spin)
+        self.size_hint = _hint("")
+        bl.addWidget(self.size_hint)
+        lay.addWidget(box)
+
+        # ---- Paper tuning ----
         box, bl = _card("Paper tuning (this PC)")
         grid = QHBoxLayout()
         col = QVBoxLayout()
@@ -610,6 +640,7 @@ class ReceiptDesignerTab(QWidget):
         bl.addWidget(self.ff_cb)
         lay.addWidget(box)
 
+        # ---- Backup & restore ----
         box, bl = _card("Backup & restore")
         bl.addWidget(_hint("Export this PC's receipt setup to a file, load one from another PC, or "
                            "put the layout back to the standard receipt."))
@@ -622,14 +653,19 @@ class ReceiptDesignerTab(QWidget):
         row.addStretch()
         bl.addLayout(row)
         lay.addWidget(box)
-
         lay.addStretch()
+
         foot = QHBoxLayout()
+        foot.setContentsMargins(16, 8, 16, 12)
         foot.addStretch()
         done = _btn("Done", primary=True)
         done.clicked.connect(dlg.close)
         foot.addWidget(done)
-        lay.addLayout(foot)
+        outer.addLayout(foot)
+        # never narrower than the widest control (the long ESC/POS label) + the scrollbar,
+        # so nothing is ever clipped, whatever font or DPI the PC uses
+        dlg.setMinimumWidth(max(480, body.minimumSizeHint().width() + 36))
+        dlg.resize(max(dlg.width(), dlg.minimumWidth()), dlg.height())
         self._adv_dialog = dlg
         self._adv_placed = False
 
@@ -647,13 +683,25 @@ class ReceiptDesignerTab(QWidget):
         dlg.activateWindow()
 
     def _update_adv_summary(self, *_):
-        """One line under the button, so hidden values are never invisible."""
+        """Three short lines under the button, so hidden values are never invisible."""
         if not hasattr(self, "adv_summary"):
             return
+        raw = self.mode_combo.currentData() != "raster"
+        esc = raw and self.escpos_cb.isChecked()
+        if not raw:
+            cmds, text = "graphics mode", ("graphics font auto" if self.raster_pt_spin.value() == self.raster_pt_spin.minimum()
+                                           else f"graphics font {self.raster_pt_spin.value()} pt")
+        elif esc:
+            cmds = f"ESC/POS on · cutter {'yes' if self.cutter_cb.isChecked() else 'no'}"
+            text = (f"Font {str(self.font_combo.currentData()).upper()} · name {self.heading_combo.currentData()}"
+                    f" · total {self.total_combo.currentData()}")
+        else:
+            cmds, text = "ESC/POS off", "the printer's own font"
         cols = "auto" if self.cols_spin.value() == 0 else str(self.cols_spin.value())
         feed = f"{self.feed_spin.value()} lines" if self.feed_cb.isChecked() else "standard"
         self.adv_summary.setText(
-            f"Columns {cols} · left margin {self.margin_spin.value()} · paper feed {feed} · "
+            f"Commands: {cmds}\nText: {text}\n"
+            f"Paper: columns {cols} · margin {self.margin_spin.value()} · feed {feed} · "
             f"form feed {'on' if self.ff_cb.isChecked() else 'off'}")
 
     def _update_size_controls(self):
@@ -668,10 +716,10 @@ class ReceiptDesignerTab(QWidget):
         self.raster_pt_spin.setEnabled(mode == "raster")
         if mode == "raster":
             msg = ("Graphics mode draws the receipt itself, so the text size follows the Columns setting "
-                   "(Advanced settings; more columns = smaller text). Or set an exact size above.")
+                   "(under Paper tuning; more columns = smaller text). Or set an exact size above.")
         elif not esc:
             msg = ("Plain-text mode prints in the printer's own font, which this program can't change. "
-                   "Tick “Send ESC/POS formatting” under Printer to choose a font and sizes.")
+                   "Tick “Send ESC/POS formatting” under Printer commands to choose a font and sizes.")
         else:
             msg = ("Compact (Font B) fits about ⅓ more characters per line, so the Columns change — "
                    "run the calibration wizard after switching.")
@@ -796,11 +844,16 @@ class ReceiptDesignerTab(QWidget):
                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         return btn == QMessageBox.StandardButton.Yes and self.save()
 
+    def _update_test_label(self):
+        report = str(self.kind_combo.currentData() or "").startswith("report_")
+        self.test_btn.setText("Print test report" if report else "Print test receipt")
+
     def _print_test(self):
-        if not self._ensure_saved("The test receipt"):
+        kind = self.kind_combo.currentData() or "sale"
+        if not self._ensure_saved("The test report" if kind.startswith("report_") else "The test receipt"):
             return
         from utils.print_manager import print_test_receipt
-        print_test_receipt(self)
+        print_test_receipt(self, kind)
 
     def _calibrate(self):
         if not self._ensure_saved("Calibration"):
