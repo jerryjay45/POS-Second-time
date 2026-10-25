@@ -134,6 +134,61 @@ def _item_row(name: str, qty, total_str: str, width: int) -> str:
     indent = " " * _ROW_INDENT
     return f"{indent}{name[:name_w]:<{name_w}} {str(qty):>{_QTY_W}}x {total_str:>{_TOTAL_W}}"
 
+def _item_cells(item: dict, currency: str) -> tuple[str, str, str, str]:
+    """The four printed values of a sale item: qty, unit price, GCT, line total."""
+    return (str(item["quantity"]), _cur(item["unit_price"], currency),
+            _cur(item.get("gct_amount", 0), currency), _cur(item["line_total"], currency))
+
+
+def _values_fit(cells: list, widths: tuple) -> bool:
+    """True when every qty/price/GCT/total value (and its column header) fits its column
+    with at least one space in front of it. Python's width formatting never truncates, so a
+    value that doesn't fit silently pushes the row past the paper and glues the columns
+    together - e.g. a J$2,000.00 price on 57 mm paper."""
+    for col, (head, width) in enumerate(zip(("Qty", "Price", "GCT", "Total"), widths)):
+        longest = max([len(head)] + [len(c[col]) for c in cells])
+        if longest + 1 > width:
+            return False
+    return True
+
+
+def _items_section(items: list, currency: str, w: int) -> list[Line]:
+    """The item block of a sale receipt: a column header, then each item's name and values.
+
+    Normally a table (Qty / Price / GCT / Total). If any value of this receipt is too wide
+    for its column, THIS receipt uses a stacked layout instead - '<qty> x <price>' with the
+    total on the same line (GCT on its own line when there is any) - which fits any paper.
+    Receipts whose values all fit keep the table, exactly as before."""
+    qty_w, price_w, gct_w, total_w = _item_value_cols(w)
+    cells = [_item_cells(i, currency) for i in items]
+    table = _values_fit(cells, (qty_w, price_w, gct_w, total_w))
+
+    lines: list[Line] = []
+    if table:
+        lines.append((f"{'Qty':>{qty_w}}{'Price':>{price_w}}{'GCT':>{gct_w}}{'Total':>{total_w}}", "normal"))
+    else:
+        lines.append((_right("  Qty x Price", "Total", w), "normal"))
+    lines.append((_div(w), "div"))
+
+    for item, (qty, price, gct, total) in zip(items, cells):
+        for l in _wrap(item["product_name"], w, indent=2):
+            lines.append((l, "normal"))
+        if table:
+            lines.append((f"{qty:>{qty_w}}{price:>{price_w}}{gct:>{gct_w}}{total:>{total_w}}", "normal"))
+        else:
+            left = f"  {qty} x {price}"
+            if len(left) + 1 + len(total) <= w:
+                lines.append((_right(left, total, w), "normal"))
+            else:                                   # absurdly large amounts: total on its own line
+                lines.append((left, "normal"))
+                lines.append((_right("  Total:", total, w), "normal"))
+            if (item.get("gct_amount") or 0) > 0:
+                lines.append((_right("  GCT:", gct, w), "normal"))
+        if item.get("discount_amount", 0) > 0:
+            lines.append((_right("  Discount:", f"-{_cur(item['discount_amount'], currency)}", w), "normal"))
+    return lines
+
+
 def _ts(dt_str: str) -> str:
     """Format a datetime string to 'DD/MM/YYYY HH:MM'."""
     try:
@@ -204,19 +259,7 @@ def format_sale_lines(receipt: dict, biz: dict, currency: str = "$",
     # numeric columns is what made the old layout illegible — long names
     # got truncated and the numbers ran together. This gives the name the
     # full paper width and wraps rather than truncates.
-    qty_w, price_w, gct_w, total_w = _item_value_cols(w)
-    lines.append((f"{'Qty':>{qty_w}}{'Price':>{price_w}}{'GCT':>{gct_w}}{'Total':>{total_w}}", "normal"))
-    lines.append((_div(w), "div"))
-    for item in receipt.get("items", []):
-        for i, l in enumerate(_wrap(item["product_name"], w, indent=2)):
-            lines.append((l, "normal"))
-        qty   = str(item["quantity"])
-        price = _cur(item["unit_price"], currency)
-        gct   = _cur(item.get("gct_amount", 0), currency)
-        total = _cur(item["line_total"], currency)
-        lines.append((f"{qty:>{qty_w}}{price:>{price_w}}{gct:>{gct_w}}{total:>{total_w}}", "normal"))
-        if item.get("discount_amount", 0) > 0:
-            lines.append((_right("  Discount:", f"-{_cur(item['discount_amount'], currency)}", w), "normal"))
+    lines += _items_section(receipt.get("items", []), currency, w)
 
     lines.append((_div(w), "div"))
     lines.append((_right("Subtotal:", _cur(receipt["subtotal"], currency), w), "normal"))
