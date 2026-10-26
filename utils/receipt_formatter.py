@@ -146,6 +146,40 @@ def _item_row(name: str, qty, total_str: str, width: int) -> str:
     indent = " " * _ROW_INDENT
     return f"{indent}{name[:name_w]:<{name_w}} {qty_str:>{qty_w}}x {total_str:>{total_w}}"
 
+def _item_rows(name: str, qty, total_str: str, width: int) -> list[str]:
+    """One or more lines for a '<name> <qty>x <total>' entry - a product is never cut short.
+
+    When the whole name fits beside the numbers this is the one-line _item_row, exactly as
+    before. When it would not fit, the full name goes on its own line(s) with the qty and
+    total on a line below it, the way the sale receipt lays out an item:
+
+        CHICKEN BACK 1LB   450x J$652,500.00          (fits: one line)
+        POST HONEY BUNCHES OF OATS
+        W/CINNAMON 14.5 OZ                            (too long: two lines)
+            38x            J$76,000.00
+
+    The name keeps the same left indent as the one-line rows, so in the Z-report's nested
+    LINE ITEMS section a wrapped product still sits under its receipt heading."""
+    qty_str  = str(qty)
+    overhead = _ROW_INDENT + 1 + max(_QTY_W, len(qty_str)) + 1 + 1 + max(_TOTAL_W, len(total_str))
+    room = width - overhead                           # characters left for the name on one line
+    if _MIN_NAME_W <= room and len(name) <= room:     # the whole name genuinely fits
+        return [_item_row(name, qty, total_str, width)]
+
+    indent = " " * _ROW_INDENT
+    avail  = max(8, width - _ROW_INDENT)
+    out: list[str] = []
+    for part in _wrap(" ".join(name.split()), avail):
+        while len(part) > avail:                 # a single very long word: split it, don't overflow
+            out.append(indent + part[:avail])
+            part = part[avail:]
+        out.append(indent + part)
+    # qty + total line: indented under the name, but never so far that it overflows
+    pad = max(0, min(2 * _ROW_INDENT, width - len(qty_str) - 1 - len(total_str) - 1))
+    out.append(_right(f"{' ' * pad}{qty_str}x", total_str, width))
+    return out
+
+
 def _item_cells(item: dict, currency: str) -> tuple[str, str, str, str]:
     """The four printed values of a sale item: qty, unit price, GCT, line total."""
     return (str(item["quantity"]), _cur(item["unit_price"], currency),
@@ -460,7 +494,7 @@ def _product_summary_section(product_totals: dict, currency: str, w: int) -> lis
                         reverse=True):
         agg   = product_totals[name]
         total = _cur(agg["total"], currency)
-        lines.append((_item_row(name, agg["qty"], total, w), "normal"))
+        lines += [(row, "normal") for row in _item_rows(name, agg["qty"], total, w)]
     lines.append((_div(w), "div"))
     return lines
 
@@ -529,7 +563,7 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
             lines.append((f"  {receipt['receipt_number']}  {_ts(receipt['created_at'])}", "normal"))
             for item in receipt.get("items", []):
                 total = _cur(item["line_total"], currency)
-                lines.append((_item_row(item["product_name"], item["quantity"], total, w), "normal"))
+                lines += [(row, "normal") for row in _item_rows(item["product_name"], item["quantity"], total, w)]
             lines.append((_right("  Receipt Total:", _cur(receipt["total"], currency), w), "normal"))
             lines.append(("", "normal"))
         lines.append((_div(w), "div"))
