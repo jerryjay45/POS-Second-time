@@ -127,12 +127,24 @@ _ROW_INDENT = 4
 _QTY_W = 4
 _TOTAL_W = 11
 
+# Shortest the name column may get. Only reached on very narrow paper or with very large
+# amounts; it used to be 10, which made the row wider than the paper in those cases.
+_MIN_NAME_W = 4
+
 def _item_row(name: str, qty, total_str: str, width: int) -> str:
-    """Format one '<name> <qty>x <total>' row, sized to fit `width`."""
-    overhead = _ROW_INDENT + 1 + _QTY_W + 1 + 1 + _TOTAL_W  # + 2 spaces + "x"
-    name_w = max(10, width - overhead)
+    """Format one '<name> <qty>x <total>' row, sized to fit `width`.
+
+    The qty and total columns grow to fit their values (a J$100,000.00 product total is 12
+    characters, a 10,000-unit quantity is 5 - both wider than the usual columns), and the
+    NAME column gives up the difference, so the row is never wider than the paper. Rows
+    whose values fit the usual columns come out exactly as they always did."""
+    qty_str = str(qty)
+    qty_w   = max(_QTY_W, len(qty_str))
+    total_w = max(_TOTAL_W, len(total_str))
+    overhead = _ROW_INDENT + 1 + qty_w + 1 + 1 + total_w  # + 2 spaces + "x"
+    name_w = max(_MIN_NAME_W, width - overhead)
     indent = " " * _ROW_INDENT
-    return f"{indent}{name[:name_w]:<{name_w}} {str(qty):>{_QTY_W}}x {total_str:>{_TOTAL_W}}"
+    return f"{indent}{name[:name_w]:<{name_w}} {qty_str:>{qty_w}}x {total_str:>{total_w}}"
 
 def _item_cells(item: dict, currency: str) -> tuple[str, str, str, str]:
     """The four printed values of a sale item: qty, unit price, GCT, line total."""
