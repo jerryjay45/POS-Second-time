@@ -106,68 +106,25 @@ def _cur(amount: float, symbol: str = "$") -> str:
         return f"-{symbol}{-amount:,.2f}"
     return f"{symbol}{amount:,.2f}"
 
-# Column widths for the "    {name} {qty}x {total}" rows used by both the
-# LINE ITEMS and PRODUCT SUMMARY sections of the Z-report. PRODUCT SUMMARY
-# sums across every receipt in the shift, not just one line, so this needs
-# to be sized for an aggregated total, not a single sale.
-#
-# _TOTAL_W is sized for the formatted string length at each magnitude
-# (with _cur()'s thousands separator, "$" included, no sign — line
-# totals are never negative):
-#   $9,999.99      ->  9 chars
-#   $99,999.99     -> 10 chars
-#   $999,999.99    -> 11 chars   <- sized for this: a fast-moving product
-#                                   summed across a full shift, or one
-#                                   high-ticket line, can plausibly clear
-#                                   six figures in JMD.
-# 9 was one char short even at the $9,999.99/$99,999.99 boundary the old
-# comment claimed to cover — this fixes that too, not just the new
-# six-figure case.
+# Product rows in the Z-report (the LINE ITEMS and PRODUCT SUMMARY sections) use the same
+# two-line layout as an item on a sale receipt: the full name on its own line(s), then the
+# quantity and total on the line below. Names are indented _ROW_INDENT so that, in the nested
+# LINE ITEMS section, a product still sits under its receipt heading.
 _ROW_INDENT = 4
-_QTY_W = 4
-_TOTAL_W = 11
-
-# Shortest the name column may get. Only reached on very narrow paper or with very large
-# amounts; it used to be 10, which made the row wider than the paper in those cases.
-_MIN_NAME_W = 4
-
-def _item_row(name: str, qty, total_str: str, width: int) -> str:
-    """Format one '<name> <qty>x <total>' row, sized to fit `width`.
-
-    The qty and total columns grow to fit their values (a J$100,000.00 product total is 12
-    characters, a 10,000-unit quantity is 5 - both wider than the usual columns), and the
-    NAME column gives up the difference, so the row is never wider than the paper. Rows
-    whose values fit the usual columns come out exactly as they always did."""
-    qty_str = str(qty)
-    qty_w   = max(_QTY_W, len(qty_str))
-    total_w = max(_TOTAL_W, len(total_str))
-    overhead = _ROW_INDENT + 1 + qty_w + 1 + 1 + total_w  # + 2 spaces + "x"
-    name_w = max(_MIN_NAME_W, width - overhead)
-    indent = " " * _ROW_INDENT
-    return f"{indent}{name[:name_w]:<{name_w}} {qty_str:>{qty_w}}x {total_str:>{total_w}}"
 
 def _item_rows(name: str, qty, total_str: str, width: int) -> list[str]:
-    """One or more lines for a '<name> <qty>x <total>' entry - a product is never cut short.
+    """The lines for one product: its full name (wrapped, never cut), then a line with the
+    quantity on the left and the total on the right.
 
-    When the whole name fits beside the numbers this is the one-line _item_row, exactly as
-    before. When it would not fit, the full name goes on its own line(s) with the qty and
-    total on a line below it, the way the sale receipt lays out an item:
-
-        CHICKEN BACK 1LB   450x J$652,500.00          (fits: one line)
         POST HONEY BUNCHES OF OATS
-        W/CINNAMON 14.5 OZ                            (too long: two lines)
+        W/CINNAMON 14.5 OZ
             38x            J$76,000.00
 
-    The name keeps the same left indent as the one-line rows, so in the Z-report's nested
-    LINE ITEMS section a wrapped product still sits under its receipt heading."""
-    qty_str  = str(qty)
-    overhead = _ROW_INDENT + 1 + max(_QTY_W, len(qty_str)) + 1 + 1 + max(_TOTAL_W, len(total_str))
-    room = width - overhead                           # characters left for the name on one line
-    if _MIN_NAME_W <= room and len(name) <= room:     # the whole name genuinely fits
-        return [_item_row(name, qty, total_str, width)]
-
-    indent = " " * _ROW_INDENT
-    avail  = max(8, width - _ROW_INDENT)
+    Squeezing the name onto the same line as the numbers is what cut names short on narrow
+    paper ("JUICE BOX" for "JUICE BOX 200ML"), so the name always gets the full width."""
+    qty_str = str(qty)
+    indent  = " " * _ROW_INDENT
+    avail   = max(8, width - _ROW_INDENT)
     out: list[str] = []
     for part in _wrap(" ".join(name.split()), avail):
         while len(part) > avail:                 # a single very long word: split it, don't overflow
