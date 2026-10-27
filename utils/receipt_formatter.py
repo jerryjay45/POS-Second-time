@@ -23,6 +23,7 @@ text, kind in format_*_lines()); the plain-text behaviour is unchanged.
 """
 
 from __future__ import annotations
+import re
 from datetime import datetime
 
 Line = tuple[str, str]   # (text, kind)
@@ -85,6 +86,38 @@ def _wrap(text: str, width: int, indent: int = 0) -> list[str]:
         lines.append(line)
     return lines or [""]
 
+
+def _wrap_hard(text: str, width: int) -> list[str]:
+    """Word-wrap `text` to `width`, and split any single word that is still too long (so
+    nothing can run past the paper)."""
+    out: list[str] = []
+    for part in _wrap(" ".join(text.split()), width):
+        while len(part) > width:
+            out.append(part[:width])
+            part = part[width:]
+        out.append(part)
+    return out
+
+def _right_rows(label: str, value: str, width: int, kind: str = "normal") -> list[Line]:
+    """A label on the left and a value on the right - for rows where either can be long
+    (a person's name, a group name with its item count).
+
+    If both fit on one line the result is exactly _right(). If not, nothing is cut: the label
+    goes on its own line(s), and the value goes right-aligned on the line below:
+
+        FROZEN FOODS & MEATS DEPT (80 items)
+                                J$3,940,000.00
+
+    A "(...)" part of the label such as "(80 items)" is kept together when wrapping."""
+    if len(label) + 1 + len(value) <= width:
+        return [(_right(label, value, width), kind)]
+    indent = " " * (len(label) - len(label.lstrip()))
+    kept   = re.sub(r"\(([^)]*)\)", lambda m: "(" + m.group(1).replace(" ", "\x00") + ")", label.strip())
+    rows: list[Line] = [(indent + part.replace("\x00", " "), kind)
+                        for part in _wrap_hard(kept, max(8, width - len(indent)))]
+    rows += [(part.rjust(width), kind) for part in _wrap_hard(value, width)]
+    return rows
+
 def _item_value_cols(width: int) -> tuple[int, int, int, int]:
     """
     Column widths for the qty/price/gct/total row under each item's
@@ -125,12 +158,7 @@ def _item_rows(name: str, qty, total_str: str, width: int) -> list[str]:
     qty_str = str(qty)
     indent  = " " * _ROW_INDENT
     avail   = max(8, width - _ROW_INDENT)
-    out: list[str] = []
-    for part in _wrap(" ".join(name.split()), avail):
-        while len(part) > avail:                 # a single very long word: split it, don't overflow
-            out.append(indent + part[:avail])
-            part = part[avail:]
-        out.append(indent + part)
+    out: list[str] = [indent + part for part in _wrap_hard(name, avail)]
     # qty + total line: indented under the name, but never so far that it overflows
     pad = max(0, min(2 * _ROW_INDENT, width - len(qty_str) - 1 - len(total_str) - 1))
     out.append(_right(f"{' ' * pad}{qty_str}x", total_str, width))
@@ -254,7 +282,7 @@ def format_sale_lines(receipt: dict, biz: dict, currency: str = "$",
     lines.append((_right("Date:",    _ts(receipt["created_at"]), w), "normal"))
     lines.append((_right("Method:",  receipt["payment_method"].capitalize(), w), "normal"))
     if receipt.get("cashier_name") and _layout().show_cashier:
-        lines.append((_right("Cashier:", receipt["cashier_name"], w), "normal"))
+        lines += _right_rows("Cashier:", receipt["cashier_name"], w)
     lines.append((_div(w), "div"))
 
     # Items — product name on its own line, values (qty/price/GCT/total)
@@ -317,7 +345,7 @@ def format_void_lines(receipt: dict, biz: dict,
     lines.append((_right("Sale Date:",        _ts(receipt["created_at"]), w), "normal"))
     lines.append((_right("Voided:",           _ts(datetime.now().isoformat()), w), "normal"))
     if voided_by:
-        lines.append((_right("Voided By:", voided_by, w), "normal"))
+        lines += _right_rows("Voided By:", voided_by, w)
     lines.append((_div(w), "div"))
 
     if reason:
@@ -378,7 +406,7 @@ def format_refund_lines(receipt: dict, biz: dict,
     lines.append((_right("Sale Date:",        _ts(receipt["created_at"]), w), "normal"))
     lines.append((_right("Refunded:",         _ts(datetime.now().isoformat()), w), "normal"))
     if refunded_by:
-        lines.append((_right("Refunded By:", refunded_by, w), "normal"))
+        lines += _right_rows("Refunded By:", refunded_by, w)
     lines.append((_div(w), "div"))
 
     if reason:
@@ -480,14 +508,14 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
     lines.append((_center(title, w), "title"))
     lines.append((_div(w), "div"))
     lines.append((_right("Session #:", f"{session['id']:04d}", w), "normal"))
-    lines.append((_right("Cashier:",   cashier_name, w), "normal"))
+    lines += _right_rows("Cashier:",   cashier_name, w)
     lines.append((_right("Opened:",    _ts(session["opened_at"]), w), "normal"))
     if session.get("closed_at"):
         lines.append((_right("Closed:", _ts(session["closed_at"]), w), "normal"))
     if opened_by:
-        lines.append((_right("Opened By:", opened_by, w), "normal"))
+        lines += _right_rows("Opened By:", opened_by, w)
     if closed_by:
-        lines.append((_right("Closed By:", closed_by, w), "normal"))
+        lines += _right_rows("Closed By:", closed_by, w)
     lines.append((_right("Status:", session["status"].capitalize(), w), "normal"))
     lines.append((_div(w), "div"))
 
@@ -532,7 +560,7 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
     gct      = totals.get("total_gct", 0) or 0
     discount = totals.get("total_discount", 0) or 0
     subtotal = sales - gct
-    lines.append((_right("Subtotal (ex-GCT):", _cur(subtotal, currency), w), "normal"))
+    lines += _right_rows("Subtotal (ex-GCT):", _cur(subtotal, currency), w)
     lines.append((_right("GCT Collected:",     _cur(gct, currency), w), "normal"))
     if discount > 0:
         lines.append((_right("Discounts Given:", f"-{_cur(discount, currency)}", w), "normal"))
@@ -546,7 +574,7 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
         lines.append((_div(w, "-"), "div"))
         for g in group_totals:
             label = f"{g['group_name']} ({g['item_count']} items)"
-            lines.append((_right(label, _cur(g["total_sales"], currency), w), "normal"))
+            lines += _right_rows(label, _cur(g["total_sales"], currency), w)
         lines.append((_div(w), "div"))
 
     # ── Product summary — embedded in the Full report, alongside
