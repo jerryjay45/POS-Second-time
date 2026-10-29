@@ -113,7 +113,7 @@ def _finalize(lines: list) -> list:
         return lines
 
 
-def _prepare_print(text: str, lines: list | None):
+def _prepare_print(text: str, lines: list | None, copies: int | None = None):
     """Main-thread half of a print: read the settings (database access stays
     on this thread). Returns (printer, build) where `build` is a zero-argument
     function that makes the ESC/POS byte stream, or None for plain text.
@@ -137,7 +137,7 @@ def _prepare_print(text: str, lines: list | None):
         font, heading, total = lay.font, lay.heading_size, lay.total_size
         build = lambda: build_escpos_bytes(lines, cut=has_cutter, font=font,
                                            heading=heading, total=total)
-    return ThermalPrinter.from_config(), build
+    return ThermalPrinter.from_config(copies), build
 
 
 def _send_to_printer(printer, text: str, build, cash_drawer: bool):
@@ -159,7 +159,7 @@ def _send_to_printer(printer, text: str, build, cash_drawer: bool):
 
 
 def _auto_print(text: str, parent=None, lines: list | None = None,
-                cash_drawer: bool = False) -> bool:
+                cash_drawer: bool = False, copies: int | None = None) -> bool:
     """
     Print without a dialog using the configured receipt printer
     (raw passthrough or raster, per receipt_printer_mode). Blocks until the
@@ -179,10 +179,12 @@ def _auto_print(text: str, parent=None, lines: list | None = None,
                    a short separate raw send to the same printer.
                    Best-effort: a failed kick never fails the receipt
                    print. Only ever pass True for a completed sale.
+    copies       — number of copies for this job; None uses the saved
+                   "copies per sale" setting.
     """
     from utils.thermal_printer import PrinterError
     try:
-        printer, build = _prepare_print(text, lines)
+        printer, build = _prepare_print(text, lines, copies)
         _send_to_printer(printer, text, build, cash_drawer)
         return True
     except PrinterError as e:
@@ -267,17 +269,21 @@ def _auto_print_background(text: str, lines: list | None = None,
         return False
 
 
-def _dialog_print(text: str, parent=None, lines: list | None = None) -> bool:
+def _dialog_print(text: str, parent=None, lines: list | None = None,
+                  copies: int | None = None) -> bool:
     """
     Print via dialog when possible. Raw mode has no preview to show (a raw
     spooler job isn't renderable), so it prints straight to the configured
     receipt printer, same as auto-print (never kicks the cash drawer —
     that's reserved for completed sales). Raster mode shows a
     QPrintPreviewDialog so the user can preview and pick any printer.
+
+    copies — how many copies to print; None keeps the saved "copies per sale"
+    (raw mode) / the print dialog's own default (raster mode).
     """
     from core.db_config import get as cfg_get
     if cfg_get("receipt_printer_mode", "raw").strip() != "raster":
-        return _auto_print(text, parent, lines=lines, cash_drawer=False)
+        return _auto_print(text, parent, lines=lines, cash_drawer=False, copies=copies)
 
     try:
         from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
@@ -285,6 +291,8 @@ def _dialog_print(text: str, parent=None, lines: list | None = None) -> bool:
 
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         printer.setColorMode(QPrinter.ColorMode.GrayScale)
+        if copies:
+            printer.setCopyCount(max(1, int(copies)))
 
         dlg = QPrintPreviewDialog(printer, parent)
         dlg.setWindowTitle("Print Preview")
@@ -448,7 +456,9 @@ def print_session(session: dict, report_type: str = "full",
         report_folder  = _safe_folder_name(report_type)
         _save_text([cashier_folder, "sessions", report_folder],
                    f"session_{session['id']:04d}_{report_type}_{_stamp()}.txt", text)
-        return _dialog_print(text, parent, lines=lines)
+        # The report's own copy count (the Print dialog's spinner) - NOT the "copies per
+        # sale" setting, which is for sale receipts.
+        return _dialog_print(text, parent, lines=lines, copies=copies)
 
     except Exception as e:
         print(f"[PrintManager] print_session error: {e}")
@@ -512,17 +522,18 @@ def print_lines(lines: list, parent=None, *, finish: bool = True,
         return False
 
 
-def print_test_receipt(parent=None) -> bool:
-    """Print the sample sale through the real print path with the saved layout.
+def print_test_receipt(parent=None, kind: str = "sale") -> bool:
+    """Print a sample (sale, void, refund or one of the session reports) through the
+    real print path with the saved layout.
 
-    The sample is a sale, so it also fires the cash drawer when that option is
-    on - this is how the drawer is tested from the settings screen."""
+    Only the sale sample fires the cash drawer (when that option is on), exactly like a
+    real sale - this is how the drawer is tested from the settings screen."""
     from core.db_config import get as cfg_get
     from utils.receipt_samples import preview_lines
     try:
         biz, currency = _get_biz_and_currency()
-        kick = cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
-        return print_lines(preview_lines("sale", biz, currency), parent, cash_drawer=kick)
+        kick = kind == "sale" and cfg_get("cash_drawer_kick_on_cash_sale", "0").strip() == "1"
+        return print_lines(preview_lines(kind, biz, currency), parent, cash_drawer=kick)
     except Exception as e:
         print(f"[PrintManager] print_test_receipt error: {e}")
         return False

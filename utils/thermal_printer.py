@@ -106,15 +106,17 @@ class ThermalPrinter:
     # ── Factory ───────────────────────────────────────────────────────
 
     @classmethod
-    def from_config(cls) -> "ThermalPrinter":
-        """Build from the settings DB."""
+    def from_config(cls, copies: int | None = None) -> "ThermalPrinter":
+        """Build from the settings DB. `copies` overrides the saved "copies per sale" for
+        this one job (a report asks for its own number; sales use the saved setting)."""
         try:
             from core.db_config import get as cfg_get
             name   = cfg_get("receipt_printer_name", "").strip()
             mode   = cfg_get("receipt_printer_mode", "raw").strip()
-            copies = int(cfg_get("receipt_copies", "1") or "1")
+            saved  = int(cfg_get("receipt_copies", "1") or "1")
         except Exception:
-            name, mode, copies = "", "raw", 1
+            name, mode, saved = "", "raw", 1
+        copies = saved if copies is None else copies
         form_feed, mm, cols, pt = True, 76, 40, None
         try:
             from utils.receipt_layout import load_layout

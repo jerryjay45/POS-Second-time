@@ -84,15 +84,16 @@ _DEFAULTS = {
     "receipt_printer_mode":   "raw",       # "raw" (dot matrix / thermal passthrough) or "raster" (QPrinter graphics)
     "receipt_paper_width_mm": "76",        # physical paper width in mm — drives column count
     "receipt_copies":         "1",
-    "receipt_printer_escpos": "0",         # "1" = send real ESC/POS commands (bold headers/totals, paper cut) instead of plain ASCII — raw mode only, needs an ESC/POS-capable printer
-    "receipt_printer_has_cutter": "1",     # "1" = printer has an automatic cutter, safe to send the cut command in ESC/POS mode. "0" for cutter-less printers (e.g. dot matrix TM-U220) — sending cut to a printer that can't cut risks garbled trailing output
+    "receipt_printer_escpos": "1",         # "1" = send real ESC/POS commands (bold headers/totals, paper cut) instead of plain ASCII — raw mode only, needs an ESC/POS-capable printer
+    "receipt_printer_has_cutter": "0",     # "1" = printer has an automatic cutter, safe to send the cut command in ESC/POS mode. "0" for cutter-less printers (e.g. dot matrix TM-U220) — sending cut to a printer that can't cut risks garbled trailing output
     # Receipt layout (see utils/receipt_layout.py). HARDWARE settings are per printer/PC;
     # SHARED settings are the receipt's look and are the same on every terminal.
-    "receipt_columns":        "",           # "" = from paper width; otherwise measured by the calibration wizard
+    # Out-of-box values below are from the shipped receipt-setup export (setup code 185F-E11E).
+    "receipt_columns":        "38",         # "" = from paper width; otherwise measured by the calibration wizard
     "receipt_left_margin":    "0",          # blank columns on the left
-    "receipt_feed_lines":     "",           # "" = legacy 2 blank lines; otherwise blank lines fed after each receipt
-    "receipt_form_feed":      "1",          # "1" = plain-text raw jobs end with a form feed
-    "receipt_font":           "a",          # ESC/POS font: "a" standard, "b" compact (HARDWARE)
+    "receipt_feed_lines":     "7",          # "" = legacy 2 blank lines; otherwise blank lines fed after each receipt
+    "receipt_form_feed":      "0",          # "1" = plain-text raw jobs end with a form feed
+    "receipt_font":           "b",          # ESC/POS font: "a" standard, "b" compact (HARDWARE)
     "receipt_raster_font_pt":  "",          # raster mode point size; "" = fit the columns (HARDWARE)
     "receipt_heading_size":   "normal",     # SHARED: business name size — normal | tall | double (ESC/POS only)
     "receipt_total_size":     "normal",     # SHARED: TOTAL line size — normal | tall (ESC/POS only)

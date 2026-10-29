@@ -28,17 +28,18 @@ Line = tuple[str, str]          # (text, kind) — same as utils.receipt_formatt
 # ── Settings ────────────────────────────────────────────────────────────────
 
 HARDWARE_DEFAULTS: dict[str, str] = {
+    # Out-of-box values below are from the shipped receipt-setup export (setup code 185F-E11E).
     "receipt_printer_name":          "",
     "receipt_printer_mode":          "raw",
     "receipt_paper_width_mm":        "76",
-    "receipt_columns":               "",     # "" = work it out from the paper width
+    "receipt_columns":               "38",   # "" = work it out from the paper width
     "receipt_left_margin":           "0",    # blank columns on the left
-    "receipt_feed_lines":            "",     # "" = legacy: leave the formatter's 2 blank lines
-    "receipt_form_feed":             "1",    # plain-text raw jobs end with a form feed
-    "receipt_printer_escpos":        "0",
-    "receipt_font":                  "a",    # ESC/POS font: "a" standard, "b" compact (more columns)
+    "receipt_feed_lines":            "7",    # "" = legacy: leave the formatter's 2 blank lines
+    "receipt_form_feed":             "0",    # plain-text raw jobs end with a form feed
+    "receipt_printer_escpos":        "1",
+    "receipt_font":                  "b",    # ESC/POS font: "a" standard, "b" compact (more columns)
     "receipt_raster_font_pt":        "",     # raster mode: "" = fit the columns automatically
-    "receipt_printer_has_cutter":    "1",
+    "receipt_printer_has_cutter":    "0",
     "cash_drawer_kick_on_cash_sale": "0",
     "receipt_copies":                "1",
 }
