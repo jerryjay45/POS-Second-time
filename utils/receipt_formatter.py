@@ -228,22 +228,41 @@ def _ts(dt_str: str) -> str:
     except Exception:
         return str(dt_str)[:16]
 
+def _name_lines(name, width: int, double: bool) -> list[str]:
+    """The business name as centred lines. Each line the user typed is its own printed line,
+    and a line that is too long wraps instead of running past the paper. In double-width
+    size every character takes two columns, so a line only has HALF the width."""
+    avail = max(8, width // 2) if double else width
+    out: list[str] = []
+    for raw in str(name if name is not None else "").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        # a name that fits is centred exactly as typed; only a long one is re-flowed
+        parts = _wrap_hard(raw, avail) if (double or len(raw) > avail) else [raw]
+        out += [_center(l, avail) for l in parts]
+    return out or [_center("", avail)]
+
 def _header(biz: dict, width: int) -> list[Line]:
     lay = _layout()
-    name = biz.get("name", "POS System")
     lines: list[Line] = []
-    if lay.escpos and lay.heading_size == "double":
-        # Double-WIDTH characters take two columns each, so a name only has HALF the
-        # line. Centring it across the full width (as before) made anything longer
-        # than ~20 characters wrap mid-word into huge, broken lines on the printer.
-        half = max(8, width // 2)
-        for l in _wrap(str(name), half):
-            lines.append((_center(l, half), "biz_name"))
-    else:
-        lines.append((_center(name, width), "biz_name"))
-    if lay.show_address and biz.get("address"):
-        for l in _wrap(biz["address"], width):
+    double = bool(lay.escpos and lay.heading_size == "double")
+    # (double-WIDTH names only have half the line: centring one across the full width made
+    # anything longer than ~20 characters wrap mid-word into huge, broken lines.)
+    for l in _name_lines(biz.get("name", "POS System"), width, double):
+        lines.append((l, "biz_name"))
+    # optional second line under the name (a branch or tagline): regular type, so it reads
+    # as smaller than the bold / larger name above it
+    subtitle = " ".join(str(biz.get("subtitle") or "").split())
+    if subtitle:
+        for l in _wrap_hard(subtitle, width):
             lines.append((_center(l, width), "normal"))
+    if lay.show_address and biz.get("address"):
+        # one typed line = one printed line (a long one wraps); blank lines are ignored
+        for raw in str(biz["address"]).splitlines():
+            if raw.strip():
+                for l in _wrap_hard(raw, width):
+                    lines.append((_center(l, width), "normal"))
     if lay.show_phone and biz.get("phone"):
         lines.append((_center(f"Tel: {biz['phone']}", width), "normal"))
     if lay.show_trn and biz.get("tax_id"):

@@ -22,7 +22,7 @@ from utils.receipt_layout import (HARDWARE_DEFAULTS, SHARED_DEFAULTS, SPEC,
 
 FORMAT = "pos-receipt-setup"
 VERSION = 1
-BUSINESS_KEYS = ("name", "address", "phone", "tax_id", "receipt_footer")
+BUSINESS_KEYS = ("name", "address", "phone", "tax_id", "receipt_footer", "subtitle")
 
 
 def current_values(get=None) -> dict[str, str]:
@@ -124,8 +124,8 @@ def plan_import(text: str, current: dict[str, str] | None = None,
             for k in BUSINESS_KEYS:
                 if k in biz:
                     v = biz[k]
-                    if not isinstance(v, str) or len(v) > 200:
-                        plan.errors.append(f"business.{k}: must be text up to 200 characters")
+                    if not isinstance(v, str) or len(v) > 300:
+                        plan.errors.append(f"business.{k}: must be text up to 300 characters")
                         continue
                     if v.strip().upper() != str(cb.get(k, "")).strip().upper():
                         plan.business_changes.append((k, str(cb.get(k, "")), v))

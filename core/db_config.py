@@ -117,6 +117,10 @@ _DEFAULTS = {
     # Case pricing
     "case_profit_pct":       "0.10",       # 10 % markup over cost for case products
 
+    # Business name: optional second line printed under it (a branch or tagline). Kept as a
+    # setting rather than a business column so no schema change/migration is needed.
+    "business_subtitle":     "",
+
     # UI
     "currency_symbol":       "$",
     "terminal_id":           "01",
@@ -157,19 +161,46 @@ def init_db():
 
 # ── Business info ─────────────────────────────────────────────────────────────
 
+BUSINESS_TEXT_MAX = 300      # longest name / address / second line (characters)
+
+
+def clean_lines(text) -> str:
+    """Multi-line text as one value: each line trimmed, blank lines dropped, joined with
+    newlines. How the business name and address are stored - one typed line = one printed
+    line. Single-line text comes back unchanged (apart from trimming)."""
+    return "\n".join(l.strip() for l in str(text or "").replace("\r", "\n").split("\n") if l.strip())
+
+
+def one_line(text) -> str:
+    """Multi-line text on one line (for window titles and labels)."""
+    return " ".join(str(text or "").split())
+
+
 def get_business() -> dict:
     with _conn() as con:
         row = con.execute("SELECT * FROM business WHERE id = 1").fetchone()
-        return dict(row) if row else {}
+        biz = dict(row) if row else {}
+    biz["subtitle"] = get("business_subtitle", "")      # second line under the name
+    return biz
 
 
 def update_business(**fields) -> bool:
     if not fields:
         return False
-    # Uppercase all text fields except email, website, and numeric fields
+    fields = dict(fields)
+    # The second line lives in settings (see _DEFAULTS), not in the business table.
+    subtitle = fields.pop("subtitle", None)
+    if subtitle is not None:
+        set("business_subtitle", one_line(subtitle).upper())
+    if not fields:
+        return True
+    # Uppercase all text fields except email, website, and numeric fields. Name and
+    # address may span several lines (one typed line = one printed line).
     _skip_upper = {"email", "website", "gct_rate"}
+    _multiline  = {"name", "address"}
     fields = {
-        k: v.strip().upper() if isinstance(v, str) and k not in _skip_upper else v
+        k: (clean_lines(v).upper() if k in _multiline else v.strip().upper())
+        if isinstance(v, str) and k not in _skip_upper else v
         for k, v in fields.items()
     }
     parts = [f"{k} = ?" for k in fields]
@@ -241,9 +272,14 @@ def apply_setup(settings: dict, business: dict | None = None):
             [(k, str(v)) for k, v in settings.items()]
         )
         if business:
-            allowed = {"name", "address", "phone", "tax_id", "receipt_footer"}
-            fields = {k: v.strip().upper() for k, v in business.items()
-                      if k in allowed and isinstance(v, str)}
+            allowed = {"name", "address", "phone", "tax_id", "receipt_footer", "subtitle"}
+            fields = {k: (clean_lines(v) if k in ("name", "address") else v.strip()).upper()
+                      for k, v in business.items() if k in allowed and isinstance(v, str)}
+            if "subtitle" in fields:
+                con.execute(
+                    "INSERT INTO settings (key, value) VALUES ('business_subtitle', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (one_line(fields.pop("subtitle")),))
             if fields:
                 parts = ", ".join(f"{k} = ?" for k in fields)
                 con.execute(f"UPDATE business SET {parts} WHERE id = 1", list(fields.values()))

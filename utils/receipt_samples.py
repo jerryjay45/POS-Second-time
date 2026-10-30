@@ -98,7 +98,7 @@ def sample_biz(real: dict | None = None) -> dict:
     """The real business details when they are filled in, otherwise a stand-in."""
     real = real or {}
     fallback = {"name": "MY STORE", "address": "1 MAIN STREET, PORTMORE",
-                "phone": "876-555-0100", "tax_id": "123-456-789",
+                "phone": "876-555-0100", "tax_id": "123-456-789", "subtitle": "",
                 "receipt_footer": "Thank you for your business!"}
     out = dict(fallback)
     for k, v in real.items():

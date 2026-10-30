@@ -24,7 +24,7 @@ from ui.shared.theme import (
     MAIN_FONT,
 )
 from core.db_users  import authenticate, get_open_session
-from core.db_config import get_business, get_int, set as cfg_set, get_bool
+from core.db_config import get_business, get_int, set as cfg_set, get_bool, one_line
 
 
 # ── Hex logo widget ───────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ class LoginCard(QFrame):
         layout.addSpacing(16)
 
         biz = get_business()
-        title = QLabel(biz.get("name", "Merchant POS Systems"))
+        title = QLabel(one_line(biz.get("name", "Merchant POS Systems")))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(f"""
             font-size: 20px; font-weight: 700;

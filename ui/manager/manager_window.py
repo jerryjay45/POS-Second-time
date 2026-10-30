@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QFrame, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QComboBox, QCheckBox, QAbstractItemView,
     QMessageBox, QScrollArea, QSplitter, QSpinBox, QDoubleSpinBox,
-    QListWidget, QListWidgetItem, QFormLayout, QDialog,
+    QListWidget, QListWidgetItem, QFormLayout, QDialog, QSizePolicy,
 )
 from PyQt6.QtCore  import Qt, pyqtSignal
 from PyQt6.QtGui   import QColor, QDoubleValidator
@@ -29,10 +29,12 @@ from core.db_users    import get_users
 from ui.manager.user_dialog import UserDialog
 from core.db_config   import (
     get_business, update_business, get, set as cfg_set, set_many,
+    clean_lines, BUSINESS_TEXT_MAX,
     gct_rate, get_pg_config, save_pg_config, get_quick_keys, save_quick_keys,
 )
 from core.db_products import get_products, get_product_by_id, get_groups, add_group, delete_group, update_group_margin, recalculate_all_cases
 from ui.shared.checkbox import make_checkbox
+from ui.shared.upper_text import make_upper_textbox
 
 # AMBER (#EF9F27) used directly as text on white measured ~2.2:1 — same
 # failure pattern found and fixed throughout the cashier section. Scoped
@@ -307,8 +309,17 @@ class ManagerWindow(SupervisorWindow):
         form = QFormLayout(); form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        self.biz_name    = self._finp("Business name");   form.addRow(self._flabel("Business Name"), self.biz_name)
-        self.biz_address = self._finp("Address");         form.addRow(self._flabel("Address"),       self.biz_address)
+        self.biz_name = make_upper_textbox("e.g. JOHN'S SUPERMARKET", 2, self._box_style())
+        form.addRow(self._flabel("Business Name"), self.biz_name)
+        form.addRow("", self._fhint("Press Enter to start a new line - each line prints on its own line, centred. "
+                                    "A line that is too long wraps by itself."))
+        self.biz_subtitle = self._finp("e.g. PORTMORE BRANCH")
+        form.addRow(self._flabel("Second Line"), self.biz_subtitle)
+        form.addRow("", self._fhint("Optional. Printed under the name in regular type (a branch, or a tagline)."))
+        self.biz_address = make_upper_textbox("e.g.\n12 MAIN STREET\nPORTMORE, ST. CATHERINE", 4, self._box_style())
+        form.addRow(self._flabel("Address"), self.biz_address)
+        form.addRow("", self._fhint("One line per printed line, e.g. street, town, parish. "
+                                    "A line that is too long wraps by itself."))
         self.biz_phone   = self._finp("Phone");           form.addRow(self._flabel("Phone"),         self.biz_phone)
         self.biz_email   = self._finp("Email");           form.addRow(self._flabel("Email"),         self.biz_email)
         self.biz_tax_id  = self._finp("Tax ID / TRN");    form.addRow(self._flabel("Tax ID"),        self.biz_tax_id)
@@ -655,8 +666,9 @@ class ManagerWindow(SupervisorWindow):
 
     def _biz_load(self):
         b = get_business()
-        self.biz_name.setText(b.get("name",""))
-        self.biz_address.setText(b.get("address",""))
+        self.biz_name.setPlainText(b.get("name",""))
+        self.biz_subtitle.setText(b.get("subtitle",""))
+        self.biz_address.setPlainText(b.get("address",""))
         self.biz_phone.setText(b.get("phone",""))
         self.biz_email.setText(b.get("email",""))
         self.biz_tax_id.setText(b.get("tax_id",""))
@@ -674,8 +686,14 @@ class ManagerWindow(SupervisorWindow):
 
     def _biz_save(self):
         try:
-            update_business(name=self.biz_name.text().strip(),
-                            address=self.biz_address.text().strip(),
+            for label, text in (("Business name", self.biz_name.toPlainText()),
+                                ("Second line",   self.biz_subtitle.text()),
+                                ("Address",       self.biz_address.toPlainText())):
+                if len(clean_lines(text)) > BUSINESS_TEXT_MAX:
+                    raise ValueError(f"{label} is too long (the limit is {BUSINESS_TEXT_MAX} characters).")
+            update_business(name=self.biz_name.toPlainText(),
+                            subtitle=self.biz_subtitle.text(),
+                            address=self.biz_address.toPlainText(),
                             phone=self.biz_phone.text().strip(),
                             email=self.biz_email.text().strip(),
                             tax_id=self.biz_tax_id.text().strip(),
@@ -688,6 +706,10 @@ class ManagerWindow(SupervisorWindow):
             cfg_set("low_stock_threshold",  str(self.perm_low_stock_threshold.value()))
             cfg_set("stock_tracking",       "1" if self.perm_stock_tracking.isChecked()       else "0")
             self._save_discount_levels()
+            saved = get_business()                       # show it back as it is stored and will print
+            self.biz_name.setPlainText(saved.get("name", ""))
+            self.biz_subtitle.setText(saved.get("subtitle", ""))
+            self.biz_address.setPlainText(saved.get("address", ""))
             self.biz_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
             self.biz_feedback.setText("✓  Business info saved.")
         except Exception as e:
@@ -878,6 +900,20 @@ class ManagerWindow(SupervisorWindow):
         else:
             inp = QLineEdit(); inp.setPlaceholderText(placeholder); inp.setFixedHeight(34)
         inp.setStyleSheet(self._input_style()); return inp
+
+    def _box_style(self):
+        """Style for the multi-line name/address boxes - matches _input_style()."""
+        return (
+            f"QPlainTextEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
+            f"border-radius:7px;padding:6px 10px;font-size:12px;}}"
+            f"QPlainTextEdit:hover{{border-color:{AMBER_LIGHTEST};}}"
+            f"QPlainTextEdit:focus{{border-color:{AMBER};background:#fffef9;}}"
+        )
+
+    def _fhint(self, text):
+        l = QLabel(text); l.setWordWrap(True)
+        l.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)   # use the whole field width
+        l.setStyleSheet(f"color:{MUTED};font-size:10px;"); return l
 
     def _flabel(self, text):
         l = QLabel(text); l.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:600;"); return l
