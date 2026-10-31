@@ -166,7 +166,8 @@ Databases, receipts and price-tag labels live in a `data/`, `receipts/` and `lab
 
 | How you run it | Root folder |
 |---|---|
-| From source, or the portable builds | next to the program files |
+| From source | next to the program files |
+| Linux portable build | `~/.local/share/merchantpos` |
 | Windows installer | `C:\MerchantPOS` |
 | Flatpak | `~/.var/app/com.merchantretail.pos/data/merchantpos` |
 
