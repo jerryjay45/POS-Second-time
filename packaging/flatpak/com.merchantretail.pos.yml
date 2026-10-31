@@ -15,6 +15,8 @@ finish-args:
   - --share=network         # PostgreSQL sync, network thermal printers
   - --socket=cups           # normal (A4/Letter) printers via QPrinter
   - --filesystem=xdg-documents   # DBF stock import folder
+  - --filesystem=/run/media      # USB drives (backup destinations)
+  - --filesystem=/mnt            # mounted network shares / disks (backup destinations)
 
 cleanup-commands:
   - /app/cleanup-BaseApp.sh

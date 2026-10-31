@@ -144,6 +144,9 @@ class ManagerWindow(SupervisorWindow):
         # calibration, export/import. Reloads on return unless it has unsaved edits.
         self._lazy.add("receipt", "🖨  Receipt", self._build_receipt_tab,
                        lambda: self._lazy.page("receipt").reload_if_clean())
+        # Backups: destinations, schedule, retention, history, restore
+        self._lazy.add("backup", "💾  Backup", self._build_backup_tab,
+                       lambda: self._lazy.page("backup").refresh())
         # Then all supervisor tabs
         self._lazy.add("products", "📦  Products", self._build_products_tab,
                        lambda: self._load_products(self._pg_search))
@@ -164,6 +167,19 @@ class ManagerWindow(SupervisorWindow):
         self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
         self._lazy.start(0)
         return self.tabs
+
+    def _build_backup_tab(self):
+        from ui.manager.backup_tab import BackupTab
+        return BackupTab(self.user)
+
+    def _on_logout_confirmed(self):
+        """Manager logout: start a background backup if switched on."""
+        try:
+            from core import backup as bk
+            if bk.load_settings()["on_manager_logout"]:
+                bk.run_async("logout")
+        except Exception:
+            pass                       # a backup problem must never block logging out
 
     def _build_receipt_tab(self):
         from ui.manager.receipt_tab import ReceiptDesignerTab
@@ -756,6 +772,8 @@ class ManagerWindow(SupervisorWindow):
             out.append("PostgreSQL")
         if self._lazy.is_built("receipt") and getattr(self._lazy.page("receipt"), "_dirty", False):
             out.append("Receipt")
+        if self._lazy.is_built("backup") and self._lazy.page("backup").is_dirty():
+            out.append("Backup")
         return out
 
     def _biz_save(self):

@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFrame, QComboBox, QProgressBar,
-    QCheckBox, QMessageBox, QLineEdit,
+    QCheckBox, QMessageBox, QLineEdit, QApplication,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -543,6 +543,28 @@ class DBFImportTab(QWidget):
         box.exec()
         if box.clickedButton() is not go:
             return
+
+        # Safety net: back up first, and wait for it, so a bad import can be undone
+        from core import backup as bk
+        if bk.load_settings()["before_import"]:
+            self.status_lbl.setText("Backing up before the import…")
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            QApplication.processEvents()
+            try:
+                res = bk.create_backup("pre-import", wait=True)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not res.get("ok"):
+                reply = QMessageBox.question(
+                    self, "Backup Failed",
+                    "The safety backup before the import failed:\n"
+                    f"{res.get('error', 'unknown error')}\n\n"
+                    "Import without a backup?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    self.status_lbl.setText("Import cancelled: no backup was made.")
+                    return
 
         self.results_tbl.setRowCount(0)
         self.summary_lbl.setVisible(False)

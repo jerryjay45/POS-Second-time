@@ -63,7 +63,8 @@ POS-Second-time/
 │   ├── db_products.py       # Products, groups, stock, discount levels
 │   ├── db_checkout.py       # Receipts, sessions, refunds
 │   ├── db_users.py          # Users, roles, login sessions
-│   └── db_config.py         # Business info, settings, quick keys
+│   ├── db_config.py         # Business info, settings, quick keys
+│   └── backup.py            # Backups: snapshot, verify, destinations, retention, restore
 ├── ui/
 │   ├── base_window.py       # Shared window behaviour
 │   ├── setup_wizard.py      # First-time setup
@@ -157,6 +158,20 @@ The Flatpak does not bundle `python-escpos`; thermal printing falls back to plai
 ### Build — GitHub Actions
 
 The **Package** workflow (`.github/workflows/package.yml`) builds the Windows installer on a Windows runner and a Flatpak bundle. Run it from the Actions tab.
+
+---
+
+## Backups
+
+**Manager → Backup** protects your data. Each backup is one zip with a consistent copy of all four databases (safe to take while a till is mid-sale), your receipts and labels, and checksums. It is verified after it is written and again after each copy.
+
+- **Destinations:** any number of folders: a local folder (default `Documents/MerchantPOS Backups`), a USB drive, a network share. A destination that is offline doesn't stop the others.
+- **Automatic:** daily at a set time (catches up at the next start-up if the computer was off), when a manager logs out, and before every DBF import (the import waits for it). Automatic backups are skipped when nothing has changed.
+- **Keep:** the latest N days plus one per week for M weeks; before-import and before-restore backups are kept separately. Only this terminal's `MerchantPOS_*` backup files are ever deleted.
+- **Restore:** Manager only. The file is verified first, a safety backup of the current data is made, the databases are swapped in, and the program closes so you can start it fresh. Receipts and labels are merged, never deleted.
+- Settings and history live in `backup/` inside the data folder, outside the databases, so a restore can't change them.
+- Backups contain user password hashes and sales data. Keep the destinations as private as the till itself.
+- Flatpak: USB drives (`/run/media`) and mounted shares (`/mnt`) are allowed; other folders need `flatpak override --user --filesystem=/path com.merchantretail.pos`.
 
 ---
 

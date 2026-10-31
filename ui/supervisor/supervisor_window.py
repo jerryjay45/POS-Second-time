@@ -1421,7 +1421,11 @@ class SupervisorWindow(BaseWindow):
         reply = QMessageBox.question(self, title, msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, default)
         if reply == QMessageBox.StandardButton.Yes:
+            self._on_logout_confirmed()
             self.logout_requested.emit(); self.force_close()
+
+    def _on_logout_confirmed(self):
+        """Hook for subclasses; runs once the user has confirmed logging out."""
 
     # ================================================================
     # STYLE HELPERS
