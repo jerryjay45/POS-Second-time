@@ -2,11 +2,20 @@
 Merchant POS Systems — Central Configuration
 """
 import os
+import sys
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR   = os.path.join(BASE_DIR, "data")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+
+# Writable user-data root. Defaults to the app folder (portable / source runs).
+# Packaged installs that live in a read-only location (Flatpak's /app) set
+# MERCHANTPOS_HOME to a per-user writable directory.
+USER_DIR   = os.environ.get("MERCHANTPOS_HOME") or BASE_DIR
+if USER_DIR == BASE_DIR and getattr(sys, "frozen", False) and os.name == "nt":
+    # Installed under Program Files (not writable by normal users)
+    USER_DIR = os.path.join(os.environ.get("LOCALAPPDATA", BASE_DIR), "MerchantPOS")
+DATA_DIR   = os.path.join(USER_DIR, "data")
 
 # ── Database files ────────────────────────────────────────────────────────────
 DB_PRODUCTS  = os.path.join(DATA_DIR, "products.db")
@@ -27,8 +36,8 @@ APP_NAME    = "Merchant POS Systems"
 APP_VERSION = "1.0.0"
 GCT_RATE    = 0.165          # 16.5 %
 CURRENCY    = "$"
-RECEIPT_DIR = os.path.join(BASE_DIR, "receipts")
-LABEL_DIR   = os.path.join(BASE_DIR, "labels")
+RECEIPT_DIR = os.path.join(USER_DIR, "receipts")
+LABEL_DIR   = os.path.join(USER_DIR, "labels")
 
 # Quick-key slots (F1–F8); product_id or None
 QUICK_KEY_SLOTS = 8

@@ -1,0 +1,45 @@
+name: Package
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install PyQt6 dbfread python-escpos pyserial pyusb psycopg2-binary pyinstaller
+      - name: PyInstaller
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --windowed --name MerchantPOS \
+            --icon assets/merchant_pos.ico \
+            --add-data "assets;assets" \
+            --collect-all escpos --hidden-import dbfread --hidden-import psycopg2 \
+            main.py
+          cp -r assets dist/MerchantPOS/assets
+      - name: Inno Setup installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss
+      - uses: actions/upload-artifact@v4
+        with: { name: MerchantPOS-Setup, path: packaging/windows/Output/*.exe }
+
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: merchantpos.flatpak
+          manifest-path: packaging/flatpak/com.merchantretail.pos.yml
+          cache-key: flatpak-${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with: { name: merchantpos-flatpak, path: merchantpos.flatpak }
