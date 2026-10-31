@@ -13,8 +13,9 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 # MERCHANTPOS_HOME to a per-user writable directory.
 USER_DIR   = os.environ.get("MERCHANTPOS_HOME") or BASE_DIR
 if USER_DIR == BASE_DIR and getattr(sys, "frozen", False) and os.name == "nt":
-    # Installed under Program Files (not writable by normal users)
-    USER_DIR = os.path.join(os.environ.get("LOCALAPPDATA", BASE_DIR), "MerchantPOS")
+    # Installed under Program Files (not writable by normal users); the installer
+    # creates this folder with write access for all users
+    USER_DIR = os.path.join(os.environ.get("SystemDrive", "C:") + os.sep, "MerchantPOS")
 DATA_DIR   = os.path.join(USER_DIR, "data")
 
 # ── Database files ────────────────────────────────────────────────────────────

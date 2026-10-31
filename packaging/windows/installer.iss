@@ -24,9 +24,7 @@ Name: "{group}\Merchant POS Systems"; Filename: "{app}\MerchantPOS.exe"
 Name: "{autodesktop}\Merchant POS Systems"; Filename: "{app}\MerchantPOS.exe"; Tasks: desktopicon
 
 [Dirs]
-Name: "{app}\data";     Permissions: users-modify
-Name: "{app}\receipts"; Permissions: users-modify
-Name: "{app}\labels";   Permissions: users-modify
+Name: "{sd}\MerchantPOS"; Permissions: users-modify
 
 [Run]
 Filename: "{app}\MerchantPOS.exe"; Description: "Launch Merchant POS"; Flags: nowait postinstall skipifsilent
