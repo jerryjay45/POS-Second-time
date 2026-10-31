@@ -49,7 +49,7 @@ WIN_PYTHON_URL="https://www.python.org/ftp/python/${WIN_PYTHON_VERSION}/python-$
 WIN_PYTHON_INSTALLER="$BUILD_DIR/python-${WIN_PYTHON_VERSION}-amd64.exe"
 WIN_PYTHON_EXE="$WINE_PREFIX/drive_c/Python311/python.exe"
 
-INNO_URL="https://jrsoftware.org/download.php/is.exe"
+INNO_URL="https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
 INNO_INSTALLER="$BUILD_DIR/inno_setup.exe"
 INNO_EXE="$WINE_PREFIX/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 
@@ -319,10 +319,18 @@ step "Creating Windows installer (optional)"
 
 if [ ! -f "$INNO_EXE" ]; then
     info "Installing Inno Setup..."
-    if [ ! -f "$INNO_INSTALLER" ]; then
-        curl -L --progress-bar -o "$INNO_INSTALLER" "$INNO_URL"
+    # A previous bad download (HTML page) must not be reused
+    if [ -f "$INNO_INSTALLER" ] && ! head -c2 "$INNO_INSTALLER" | grep -q '^MZ'; then
+        rm -f "$INNO_INSTALLER"
     fi
-    wine "$INNO_INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES 2>/dev/null || true
+    if [ ! -f "$INNO_INSTALLER" ]; then
+        curl -fL --progress-bar -o "$INNO_INSTALLER" "$INNO_URL" || rm -f "$INNO_INSTALLER"
+    fi
+    if [ -f "$INNO_INSTALLER" ] && head -c2 "$INNO_INSTALLER" | grep -q '^MZ'; then
+        WINEPREFIX="$WINE_PREFIX" wine "$INNO_INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES || true
+    else
+        warn "Inno Setup download is not a valid Windows executable"
+    fi
     sleep 5
 fi
 
@@ -369,17 +377,11 @@ Name: "{group}\\Uninstall ${APP_DISPLAY}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\\${APP_DISPLAY}";     Filename: "{app}\\MerchantPOS.exe"; IconFilename: "{app}\\assets\\merchant_pos.ico"; Tasks: desktopicon
 
 [Dirs]
-Name: "{app}\\data";     Permissions: users-modify
-Name: "{app}\\receipts"; Permissions: users-modify
-Name: "{app}\\labels";   Permissions: users-modify
+Name: "{sd}\\MerchantPOS"; Permissions: users-modify
 
 [Run]
 Filename: "{app}\\MerchantPOS.exe"; Description: "{cm:LaunchProgram,${APP_DISPLAY}}"; Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}\\data"
-Type: filesandordirs; Name: "{app}\\receipts"
-Type: filesandordirs; Name: "{app}\\labels"
 ISS
 
     ISS_WIN=$(winepath -w "$BUILD_DIR/installer.iss" 2>/dev/null \

@@ -1,0 +1,45 @@
+app-id: com.merchantretail.pos
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
+command: merchantpos
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --device=all            # USB / serial thermal printers (/dev/usb/lp*, /dev/ttyUSB*)
+  - --share=network         # PostgreSQL sync, network thermal printers
+  - --socket=cups           # normal (A4/Letter) printers via QPrinter
+  - --filesystem=xdg-documents   # DBF stock import folder
+
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
+
+modules:
+  - name: python-deps
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} dbfread
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/4c/94/51349e43503e30ed7b4ecfe68a8809cdb58f722c0feb79d18b1f1e36fe74/dbfread-2.0.7-py2.py3-none-any.whl
+        sha256: f604def58c59694fa0160d7be5d0b8d594467278d2bb6a47d46daf7162c84cec
+
+  - name: merchantpos
+    buildsystem: simple
+    build-commands:
+      - install -d /app/share/merchantpos
+      - cp -r main.py config.py __init__.py core ui utils assets /app/share/merchantpos/
+      - install -Dm755 packaging/flatpak/merchantpos.sh /app/bin/merchantpos
+      - install -Dm644 packaging/flatpak/com.merchantretail.pos.desktop /app/share/applications/com.merchantretail.pos.desktop
+      - install -Dm644 packaging/flatpak/com.merchantretail.pos.metainfo.xml /app/share/metainfo/com.merchantretail.pos.metainfo.xml
+      - install -Dm644 assets/merchant_pos_128.png /app/share/icons/hicolor/128x128/apps/com.merchantretail.pos.png
+      - install -Dm644 assets/merchant_pos_256.png /app/share/icons/hicolor/256x256/apps/com.merchantretail.pos.png
+      - install -Dm644 assets/merchant_pos_512.png /app/share/icons/hicolor/512x512/apps/com.merchantretail.pos.png
+    sources:
+      - type: dir
+        path: ../..

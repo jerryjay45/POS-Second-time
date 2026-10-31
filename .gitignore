@@ -9,3 +9,11 @@ dist/
 labels/
 receipts/
 build/
+build_linux/
+venv/
+.venv/
+.flatpak-builder/
+flatpak-build-dir/
+build-dir/
+*.flatpak
+packaging/windows/Output/

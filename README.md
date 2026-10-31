@@ -56,7 +56,7 @@ A full-featured, open-source Point of Sale application for retail businesses, bu
 ## Architecture
 
 ```
-merchant-pos/
+POS-Second-time/
 ├── main.py                  # Entry point
 ├── config.py                # Paths and global constants
 ├── core/
@@ -65,20 +65,29 @@ merchant-pos/
 │   ├── db_users.py          # Users, roles, login sessions
 │   └── db_config.py         # Business info, settings, quick keys
 ├── ui/
+│   ├── base_window.py       # Shared window behaviour
 │   ├── setup_wizard.py      # First-time setup
 │   ├── login_window.py      # Login screen
 │   ├── cashier/             # Cashier interface and dialogs
-│   ├── supervisor/          # Supervisor tabs and tools
-│   ├── manager/             # Manager settings and import tools
+│   ├── supervisor/          # Supervisor tabs and tools (stock, void/refund, price tags)
+│   ├── manager/             # Manager settings, receipt setup, DBF import
 │   └── shared/              # Reusable widgets and theme
-└── utils/
-    ├── thermal_printer.py   # ESC/POS thermal printer driver
-    ├── normal_printer.py    # A4/Letter printer via QPrinter
-    ├── print_manager.py     # Print routing and receipt dispatch
-    └── receipt_formatter.py # Plain-text receipt layout (42-char)
+├── utils/
+│   ├── thermal_printer.py   # Thermal printer driver (raw, ESC/POS, raster)
+│   ├── escpos_builder.py    # ESC/POS byte stream builder
+│   ├── print_manager.py     # Print routing and receipt dispatch
+│   ├── receipt_formatter.py # Plain-text receipt layout
+│   ├── receipt_layout.py    # Receipt layout settings
+│   ├── printer_profiles.py  # Printer profiles and capabilities
+│   └── ...                  # Currency, calibration sheet, receipt setup import/export
+├── packaging/
+│   ├── flatpak/             # Flatpak manifest, desktop file, metainfo
+│   └── windows/installer.iss# Inno Setup script (used by GitHub Actions)
+├── build_linux.sh           # Native Linux portable build (PyInstaller)
+└── build_windows.sh         # Windows build + installer, cross-compiled with Wine
 ```
 
-**Databases** (stored in `data/`)
+**Databases** (stored in the data folder, see [Where your data is stored](#where-your-data-is-stored))
 
 | File | Contents |
 |---|---|
@@ -108,8 +117,8 @@ merchant-pos/
 ### Run from source
 
 ```bash
-git clone https://github.com/your-org/merchant-pos.git
-cd merchant-pos
+git clone https://github.com/jerryjay45/POS-Second-time.git
+cd POS-Second-time
 python3 -m venv venv
 source venv/bin/activate
 pip install PyQt6 dbfread python-escpos pyserial pyusb psycopg2-binary
@@ -130,8 +139,38 @@ chmod +x build_linux.sh
 chmod +x build_windows.sh
 ./build_windows.sh
 # Output: dist/windows/MerchantPOS_Portable/
-#         dist/windows/MerchantPOS_Setup.exe  (if Inno Setup available)
+#         dist/windows/MerchantPOS_Setup_v1.0.0.exe  (installer, needs Inno Setup; the script downloads it)
 ```
+
+The installer creates `C:\MerchantPOS` with write access for all users; the app keeps its data there.
+
+### Build — Flatpak
+
+```bash
+flatpak install flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 com.riverbankcomputing.PyQt.BaseApp//6.11
+flatpak-builder --user --install --force-clean build-dir packaging/flatpak/com.merchantretail.pos.yml
+flatpak run com.merchantretail.pos
+```
+
+The Flatpak does not bundle `python-escpos`; thermal printing falls back to plain text there.
+
+### Build — GitHub Actions
+
+The **Package** workflow (`.github/workflows/package.yml`) builds the Windows installer on a Windows runner and a Flatpak bundle. Run it from the Actions tab.
+
+---
+
+## Where your data is stored
+
+Databases, receipts and price-tag labels live in a `data/`, `receipts/` and `labels/` folder under one root:
+
+| How you run it | Root folder |
+|---|---|
+| From source, or the portable builds | next to the program files |
+| Windows installer | `C:\MerchantPOS` |
+| Flatpak | `~/.var/app/com.merchantretail.pos/data/merchantpos` |
+
+Set the `MERCHANTPOS_HOME` environment variable to use a different root. **Back this folder up** before upgrading or moving a terminal.
 
 ---
 
@@ -237,9 +276,9 @@ This README was also written by Claude.
 
 ## Contributing
 
-Pull requests are welcome. For major changes, open an issue first to discuss what you would like to change.
+This project is maintained by one person and **pull requests are not accepted and will not be read**, so please don't spend time on them.
 
-Please ensure any changes are tested against both the Linux and Windows builds before submitting.
+You are welcome to copy the code, fork the repository, or start your own version under the terms of the GPL-3.0 license (see [License](#license)).
 
 ---
 

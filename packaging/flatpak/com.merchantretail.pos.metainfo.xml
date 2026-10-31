@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.merchantretail.pos</id>
+  <name>Merchant POS Systems</name>
+  <summary>Offline-first point of sale for retail</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>Barcode sales, thermal receipt printing, stock management and reports, with optional PostgreSQL sync between terminals.</p>
+  </description>
+  <launchable type="desktop-id">com.merchantretail.pos.desktop</launchable>
+  <releases>
+    <release version="1.0.0" date="2026-10-31"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

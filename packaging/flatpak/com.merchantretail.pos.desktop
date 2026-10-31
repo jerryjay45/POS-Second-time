@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Merchant POS Systems
+Comment=Point of sale for retail
+Exec=merchantpos
+Icon=com.merchantretail.pos
+Terminal=false
+Categories=Office;Finance;
