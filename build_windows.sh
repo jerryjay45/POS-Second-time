@@ -49,7 +49,7 @@ WIN_PYTHON_URL="https://www.python.org/ftp/python/${WIN_PYTHON_VERSION}/python-$
 WIN_PYTHON_INSTALLER="$BUILD_DIR/python-${WIN_PYTHON_VERSION}-amd64.exe"
 WIN_PYTHON_EXE="$WINE_PREFIX/drive_c/Python311/python.exe"
 
-INNO_URL="https://files.jrsoftware.org/is/6/innosetup-6.7.3.exe"
+INNO_URL="https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
 INNO_INSTALLER="$BUILD_DIR/inno_setup.exe"
 INNO_EXE="$WINE_PREFIX/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 
