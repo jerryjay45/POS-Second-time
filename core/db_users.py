@@ -200,6 +200,17 @@ def update_user(user_id: int, full_name: str = None, username: str = None,
         return cur.rowcount > 0
 
 
+def count_active_managers(exclude_id: int | None = None) -> int:
+    """Active manager accounts, optionally ignoring one user id."""
+    q = "SELECT COUNT(*) FROM users WHERE role = 'manager' AND is_active = 1"
+    params: tuple = ()
+    if exclude_id is not None:
+        q += " AND id != ?"
+        params = (exclude_id,)
+    with _conn() as con:
+        return con.execute(q, params).fetchone()[0]
+
+
 def delete_user(user_id: int) -> bool:
     with _conn() as con:
         cur = con.execute("DELETE FROM users WHERE id = ?", (user_id,))

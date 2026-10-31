@@ -117,7 +117,12 @@ class _ImportWorker(QThread):
         dbf_has_discounts = has_quan and (has_percent or has_pricem)
 
         # ── Main import loop ──────────────────────────────────────────
+        cancelled = False
         for i, rec in enumerate(records):
+            # Stop between rows (never mid-write) when the user cancels
+            if self.isInterruptionRequested():
+                cancelled = True
+                break
             self.progress.emit(i + 1, total)
             r = dict(rec)
 
@@ -253,6 +258,7 @@ class _ImportWorker(QThread):
             "updated": updated,
             "skipped": skipped,
             "errors":  errors,
+            "cancelled": cancelled,
         })
 
 
@@ -510,6 +516,34 @@ class DBFImportTab(QWidget):
         if not self._file:
             return
 
+        changes = []
+        if self.chk_update.isChecked():
+            what = [n for n, c in (("price", self.chk_price), ("cost", self.chk_cost),
+                                   ("tax", self.chk_gct), ("group", self.chk_groups),
+                                   ("discounts", self.chk_discounts),
+                                   ("stock", self.chk_stock)) if c.isChecked()]
+            if not self.chk_preserve_names.isChecked():
+                what.append("name")
+            changes.append("• Existing products will be UPDATED"
+                           + (f" ({', '.join(what)})" if what else ""))
+        if self.chk_create.isChecked():
+            changes.append("• New products will be created")
+        if not changes:
+            changes.append("• Nothing is selected to import")
+        box = QMessageBox(self)
+        box.setWindowTitle("Start Import")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(f"Import products from {os.path.basename(self._file)}?")
+        box.setInformativeText(
+            "\n".join(changes) + "\n\nThis can overwrite many products and "
+            "cannot be undone. Back up your data folder first if unsure.")
+        go = box.addButton("Start Import", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+
         self.results_tbl.setRowCount(0)
         self.summary_lbl.setVisible(False)
         self.progress_bar.setValue(0)
@@ -539,9 +573,18 @@ class DBFImportTab(QWidget):
 
     def _cancel_import(self):
         if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self.status_lbl.setText("Import cancelled.")
-            self._reset_buttons()
+            reply = QMessageBox.question(
+                self, "Stop Import",
+                "Stop the import?\n\nRows already processed will stay changed.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            # Asks the worker to stop after the current row; _on_finished
+            # then reports how far it got. (terminate() could kill it mid-write.)
+            self.cancel_btn.setEnabled(False)
+            self.status_lbl.setText("Stopping…")
+            self._worker.requestInterruption()
 
     def _on_progress(self, done: int, total: int):
         self.progress_bar.setMaximum(total)
@@ -591,7 +634,7 @@ class DBFImportTab(QWidget):
 
         t = summary
         msg = (
-            f"✓  Import complete  —  "
+            f"{'■  Import stopped' if t.get('cancelled') else '✓  Import complete'}  —  "
             f"Created: {t['created']}   "
             f"Updated: {t['updated']}   "
             f"Skipped: {t['skipped']}   "

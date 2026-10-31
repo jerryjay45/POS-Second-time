@@ -1319,9 +1319,21 @@ class CashierWindow(BaseWindow):
     # ================================================================
 
     def _handle_logout(self):
+        # The carts only exist in memory, so logging out throws them away.
+        n_items = sum(len(c) for c in self.carts)
+        if n_items:
+            total = sum(it.get("total", it["price"] * it["qty"])
+                        for c in self.carts for it in c)
+            msg = (f"You still have {n_items} item{'s' if n_items != 1 else ''} "
+                   f"({format_currency(total)}) in your carts.\n\n"
+                   "Logging out will discard them. Log out anyway?")
+            title = "Items in Cart"
+        else:
+            msg, title = "Are you sure you want to logout?", "Logout"
         reply = QMessageBox.question(
-            self, "Logout", "Are you sure you want to logout?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            self, title, msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No if n_items else QMessageBox.StandardButton.NoButton,
         )
         if reply == QMessageBox.StandardButton.Yes:
             # Session stays open — only closed manually by supervisor

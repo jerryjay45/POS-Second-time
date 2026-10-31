@@ -5,7 +5,7 @@ Stock management tab.
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLineEdit, QComboBox, QLabel, QFrame, QHeaderView,
-    QSpinBox, QAbstractItemView, QSplitter, QDialog,
+    QSpinBox, QAbstractItemView, QSplitter, QDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QIcon, QPixmap
@@ -266,6 +266,7 @@ class StockAdjustDialog(QDialog):
         self.user       = user
         self.product_id = product_id
         self.threshold  = threshold
+        self.product_name = product_name
         self.changed    = False  # set True if any adjustment was made
 
         self.setWindowTitle(f"Adjust Stock — {product_name}")
@@ -362,8 +363,20 @@ class StockAdjustDialog(QDialog):
         else:
             self.stock_note_lbl.setVisible(False)
 
+    def _confirm(self, verb: str, qty: int, reason: str) -> bool:
+        reply = QMessageBox.question(
+            self, "Confirm Stock Change",
+            f"{verb} {qty} unit{'s' if qty != 1 else ''} "
+            f"{'to' if verb == 'Add' else 'from'} {self.product_name}?\n"
+            f"Reason: {reason}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
+
     def _do_add(self):
         qty, reason = self.qty.value(), self.reason.currentText()
+        if not self._confirm("Add", qty, reason):
+            return
         adjust_stock(self.product_id, qty, reason, self.user["id"])
         self.changed = True
         self._refresh_stock_label()
@@ -372,6 +385,8 @@ class StockAdjustDialog(QDialog):
 
     def _do_remove(self):
         qty, reason = self.qty.value(), self.reason.currentText()
+        if not self._confirm("Remove", qty, reason):
+            return
         adjust_stock(self.product_id, -qty, reason, self.user["id"])
         self.changed = True
         self._refresh_stock_label()
