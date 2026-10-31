@@ -24,7 +24,7 @@ from ui.shared.theme import (
     MAIN_FONT,
 )
 from core.db_users  import authenticate, get_open_session
-from core.db_config import get_business, get_int, set as cfg_set, get_bool
+from core.db_config import get_business, get_int, set as cfg_set, get_bool, one_line
 
 
 # ── Hex logo widget ───────────────────────────────────────────────────────────
@@ -137,6 +137,40 @@ class LoginCard(QFrame):
 
         self._build_ui()
 
+    _TITLE_MAX_W = 296            # the card is 360px wide with 28px margins each side
+
+    @classmethod
+    def _wrapped_height(cls, label: QLabel, text: str, px: int, bold: bool) -> int:
+        """Height `text` needs when word-wrapped to the card's title width."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QFont, QFontMetrics
+        font = QFont(label.font())
+        font.setPixelSize(px)
+        font.setBold(bold)
+        box = QFontMetrics(font).boundingRect(QRect(0, 0, cls._TITLE_MAX_W, 10000),
+                                              int(Qt.TextFlag.TextWordWrap), text)
+        return box.height() + 4
+
+    @staticmethod
+    def _fit_title(label: QLabel, lines: list[str], max_w: int,
+                   start: int = 20, minimum: int = 14) -> tuple[int, str]:
+        """Pick the bold title size and text so the business name wraps inside `max_w`
+        instead of being clipped: shrink the type (to `minimum`) until the widest single word
+        fits; a word that is STILL too wide gets invisible break points so it wraps anywhere."""
+        from PyQt6.QtGui import QFont, QFontMetrics
+        words = [w for l in lines for w in l.split()]
+        font, px = QFont(label.font()), start
+        font.setBold(True)
+        while True:
+            font.setPixelSize(px)
+            fm = QFontMetrics(font)
+            if px <= minimum or max(fm.horizontalAdvance(w) for w in words) <= max_w:
+                break
+            px -= 1
+        def breakable(word: str) -> str:
+            return word if fm.horizontalAdvance(word) <= max_w else "\u200b".join(word)
+        return px, "\n".join(" ".join(breakable(w) for w in l.split()) for l in lines)
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 28, 28, 24)
@@ -150,14 +184,38 @@ class LoginCard(QFrame):
         layout.addSpacing(16)
 
         biz = get_business()
-        title = QLabel(biz.get("name", "Merchant POS Systems"))
+        # The business name: the lines the owner typed, each on its own line, wrapping inside
+        # the card. (A 20px bold name does not fit 300px for more than ~25 characters, and a
+        # plain QLabel clips both ends instead of wrapping.)
+        name_lines = [l.strip() for l in str(biz.get("name") or "").splitlines() if l.strip()] \
+            or ["Merchant POS Systems"]
+        title = QLabel("")
+        title.setWordWrap(True)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        px, text = self._fit_title(title, name_lines, self._TITLE_MAX_W)
+        title.setText(text)
         title.setStyleSheet(f"""
-            font-size: 20px; font-weight: 700;
+            font-size: {px}px; font-weight: 700;
             color: {DARK_CARD}; letter-spacing: -0.4px;
         """)
+        # a wrapping label inside this fixed-width card is not given its extra lines by the
+        # layout (the top and bottom of a 3-line name were cut off), so reserve them
+        title.setMinimumHeight(self._wrapped_height(title, text, px, True))
         layout.addWidget(title)
-        layout.addSpacing(4)
+
+        # optional second line under the name (a branch or tagline)
+        branch = one_line(biz.get("subtitle"))
+        if branch:
+            layout.addSpacing(3)
+            branch_lbl = QLabel(branch)
+            branch_lbl.setWordWrap(True)
+            branch_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            branch_lbl.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {DARK_CARD};")
+            branch_lbl.setMinimumHeight(self._wrapped_height(branch_lbl, branch, 13, False))
+            layout.addWidget(branch_lbl)
+            layout.addSpacing(6)
+        else:
+            layout.addSpacing(4)
 
         sub = QLabel("Sign in to continue")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)

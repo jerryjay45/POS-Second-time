@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 
+from ui.shared.upper_text import make_upper_textbox
 from ui.shared.theme import (
     AMBER, AMBER_DARK, AMBER_LIGHTEST, AMBER_BG,
     DARK, DARK_2, DARK_CARD,
@@ -112,8 +113,8 @@ class _BusinessPage(QWidget):
     def __init__(self):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(32, 24, 32, 24)
-        lay.setSpacing(10)
+        lay.setContentsMargins(32, 18, 32, 18)
+        lay.setSpacing(7)
 
         lay.addWidget(_label("Business Information", 16, bold=True))
         lay.addWidget(_label("This appears on receipts and price tags.", color=MUTED))
@@ -121,7 +122,7 @@ class _BusinessPage(QWidget):
 
         fields = [
             ("Business Name *", "e.g. JOHN'S SUPERMARKET", False),
-            ("Address",         "e.g. 12 Main Street, Kingston", False),
+            ("Address  (one line per printed line)", "", False),   # a multi-line box, built below
             ("Phone",           "e.g. 876-555-0100", False),
             ("Email",           "e.g. info@business.com", False),
             ("TRN / Tax ID",    "e.g. 123-456-789", False),
@@ -130,7 +131,14 @@ class _BusinessPage(QWidget):
         keys = ["name", "address", "phone", "email", "tax_id"]
         for (lbl, ph, pw), key in zip(fields, keys):
             lay.addWidget(_field_label(lbl))
-            inp = _input(ph, pw)
+            if key == "address":
+                # one typed line = one printed line (e.g. street / town / parish)
+                inp = make_upper_textbox("e.g.\n12 MAIN STREET\nKINGSTON", 3,
+                    f"QPlainTextEdit{{background:{WHITE};color:{DARK_CARD};"
+                    f"border:1px solid {BORDER};border-radius:8px;padding:6px 12px;font-size:13px;}}"
+                    f"QPlainTextEdit:focus{{border-color:{AMBER};}}")
+            else:
+                inp = _input(ph, pw)
             self._inputs[key] = inp
             lay.addWidget(inp)
 
@@ -157,7 +165,7 @@ class _BusinessPage(QWidget):
     def collect(self) -> dict:
         return {
             "name":           self._inputs["name"].text().strip(),
-            "address":        self._inputs["address"].text().strip(),
+            "address":        self._inputs["address"].toPlainText().strip(),
             "phone":          self._inputs["phone"].text().strip(),
             "email":          self._inputs["email"].text().strip(),
             "tax_id":         self._inputs["tax_id"].text().strip(),

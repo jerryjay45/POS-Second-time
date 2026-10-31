@@ -726,13 +726,15 @@ class ReceiptDesignerTab(QWidget):
             try:
                 lay = RL.layout_from_values(self._collect())
                 if lay.heading_size == "double":
-                    from core.db_config import get_business
-                    name = (get_business().get("name") or "").strip()
+                    from core.db_config import get_business, one_line
+                    from utils.receipt_formatter import _name_lines
+                    name = get_business().get("name") or ""
                     half = max(8, lay.width // 2)
-                    if len(name) > half:
-                        n = -(-len(name) // half)
+                    n_large  = len(_name_lines(name, lay.width, True))
+                    n_normal = len(_name_lines(name, lay.width, False))
+                    if n_large > n_normal:
                         msg += (f" At “Large” the business name has {half} characters per line, so "
-                                f"“{name}” prints on {n} lines — choose Tall or Normal to keep it on one.")
+                                f"“{one_line(name)}” prints on {n_large} lines (on {n_normal} at Tall or Normal).")
             except Exception:
                 pass
         self.size_hint.setText(msg)
