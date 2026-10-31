@@ -377,17 +377,11 @@ Name: "{group}\\Uninstall ${APP_DISPLAY}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\\${APP_DISPLAY}";     Filename: "{app}\\MerchantPOS.exe"; IconFilename: "{app}\\assets\\merchant_pos.ico"; Tasks: desktopicon
 
 [Dirs]
-Name: "{app}\\data";     Permissions: users-modify
-Name: "{app}\\receipts"; Permissions: users-modify
-Name: "{app}\\labels";   Permissions: users-modify
+Name: "{sd}\\MerchantPOS"; Permissions: users-modify
 
 [Run]
 Filename: "{app}\\MerchantPOS.exe"; Description: "{cm:LaunchProgram,${APP_DISPLAY}}"; Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}\\data"
-Type: filesandordirs; Name: "{app}\\receipts"
-Type: filesandordirs; Name: "{app}\\labels"
 ISS
 
     ISS_WIN=$(winepath -w "$BUILD_DIR/installer.iss" 2>/dev/null \
