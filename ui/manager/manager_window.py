@@ -47,6 +47,9 @@ AMBER_TEXT_ON_WHITE = "#8a5510"
 # MANAGER WINDOW
 # ================================================================
 
+from core.db_config import checkout_quick_amounts
+
+
 class ManagerWindow(SupervisorWindow):
     """
     Extends SupervisorWindow.
@@ -295,6 +298,8 @@ class ManagerWindow(SupervisorWindow):
         sub.addTab(self._build_groups_panel(),        "📂  Groups & Discounts")
         sub.addTab(self._build_pg_panel(),            "🗄  PostgreSQL")
         lay.addWidget(sub)
+        self._biz_clean = self._biz_state()   # baseline for the unsaved-changes check
+        self._pg_clean  = self._pg_state()
         return w
 
     def _build_biz_info_panel(self):
@@ -337,6 +342,28 @@ class ManagerWindow(SupervisorWindow):
         gct_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
         gct_row.addWidget(self._flabel("Rate:")); gct_row.addWidget(self.biz_gct); gct_row.addWidget(gct_hint); gct_row.addStretch()
         lay.addLayout(gct_row)
+
+        # Appearance & checkout
+        lay.addWidget(self._hdiv())
+        lay.addWidget(self._section_lbl("Appearance & Checkout"))
+        ac_form = QFormLayout(); ac_form.setSpacing(10)
+        ac_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.biz_theme = QComboBox(); self.biz_theme.setFixedHeight(36); self.biz_theme.setFixedWidth(200)
+        for key, label in (("amber", "Amber (default)"), ("blue", "Blue"),
+                           ("green", "Green"), ("high_contrast", "High contrast")):
+            self.biz_theme.addItem(label, key)
+        theme_hint = QLabel("Takes effect the next time the program starts")
+        theme_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        theme_row = QHBoxLayout(); theme_row.setSpacing(10)
+        theme_row.addWidget(self.biz_theme); theme_row.addWidget(theme_hint); theme_row.addStretch()
+        ac_form.addRow(self._flabel("Colour theme"), theme_row)
+        self.biz_quick_cash = self._finp("e.g. 5, 10, 20, 50", uppercase=False)
+        qc_hint = QLabel("Quick-cash buttons at checkout (the first 4 are shown)")
+        qc_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        qc_box = QVBoxLayout(); qc_box.setSpacing(3)
+        qc_box.addWidget(self.biz_quick_cash); qc_box.addWidget(qc_hint)
+        ac_form.addRow(self._flabel("Quick-cash amounts"), qc_box)
+        lay.addLayout(ac_form)
 
         # Cashier permissions
         lay.addWidget(self._hdiv())
@@ -640,6 +667,7 @@ class ManagerWindow(SupervisorWindow):
                            host=self.pg_host.text().strip(), port=self.pg_port.value(),
                            database=self.pg_db.text().strip(), user=self.pg_user.text().strip(),
                            password=self.pg_pass.text())
+            self._pg_clean = self._pg_state()
             self.pg_feedback.setText("✓  PostgreSQL settings saved.")
             self.pg_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
         except Exception as e:
@@ -683,6 +711,52 @@ class ManagerWindow(SupervisorWindow):
         self.perm_low_stock_threshold.setValue(get_int("low_stock_threshold", 5))
         self.perm_low_stock_threshold.setEnabled(low_stock)
         self.perm_stock_tracking.setChecked(get_bool("stock_tracking", False))
+        from core.db_config import get as _cfg
+        i = self.biz_theme.findData(_cfg("theme", "amber"))
+        self.biz_theme.setCurrentIndex(i if i >= 0 else 0)
+        self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in checkout_quick_amounts()))
+
+    @staticmethod
+    def _parse_quick_amounts(text: str) -> list[float]:
+        parts = [p.strip() for p in text.replace(";", ",").split(",") if p.strip()]
+        if not parts:
+            raise ValueError("Enter at least one quick-cash amount, e.g. 5, 10, 20, 50.")
+        try:
+            amounts = [float(p) for p in parts]
+        except ValueError:
+            raise ValueError("Quick-cash amounts must be numbers separated by commas.")
+        if any(a <= 0 for a in amounts):
+            raise ValueError("Quick-cash amounts must be greater than zero.")
+        return amounts
+
+    # ── unsaved-change tracking (checked on logout) ───────────────────
+    def _biz_state(self):
+        disc = [(r[0].value(), r[1].value()) for r in getattr(self, "_disc_rows", [])]
+        return (self.biz_name.toPlainText(), self.biz_subtitle.text(),
+                self.biz_address.toPlainText(), self.biz_phone.text(),
+                self.biz_email.text(), self.biz_tax_id.text(), self.biz_footer.text(),
+                self.biz_gct.value(), self.biz_theme.currentData(),
+                self.biz_quick_cash.text().strip(),
+                self.perm_require_remove_auth.isChecked(), self.perm_session_gate.isChecked(),
+                self.perm_cart_qty_edit.isChecked(), self.perm_low_stock.isChecked(),
+                self.perm_low_stock_threshold.value(), self.perm_stock_tracking.isChecked(),
+                tuple(disc))
+
+    def _pg_state(self):
+        return (self.pg_enabled.isChecked(), self.pg_host.text(), self.pg_port.value(),
+                self.pg_db.text(), self.pg_user.text(), self.pg_pass.text())
+
+    def _unsaved_sections(self) -> list[str]:
+        out = super()._unsaved_sections()
+        if hasattr(self, "biz_name") and hasattr(self, "_biz_clean") \
+                and self._biz_state() != self._biz_clean:
+            out.append("Business Info")
+        if hasattr(self, "pg_host") and hasattr(self, "_pg_clean") \
+                and self._pg_state() != self._pg_clean:
+            out.append("PostgreSQL")
+        if self._lazy.is_built("receipt") and getattr(self._lazy.page("receipt"), "_dirty", False):
+            out.append("Receipt")
+        return out
 
     def _biz_save(self):
         try:
@@ -691,6 +765,7 @@ class ManagerWindow(SupervisorWindow):
                                 ("Address",       self.biz_address.toPlainText())):
                 if len(clean_lines(text)) > BUSINESS_TEXT_MAX:
                     raise ValueError(f"{label} is too long (the limit is {BUSINESS_TEXT_MAX} characters).")
+            quick_amounts = self._parse_quick_amounts(self.biz_quick_cash.text())
             update_business(name=self.biz_name.toPlainText(),
                             subtitle=self.biz_subtitle.text(),
                             address=self.biz_address.toPlainText(),
@@ -699,6 +774,8 @@ class ManagerWindow(SupervisorWindow):
                             tax_id=self.biz_tax_id.text().strip(),
                             receipt_footer=self.biz_footer.text().strip())
             cfg_set("gct_rate", str(self.biz_gct.value() / 100))
+            cfg_set("theme", self.biz_theme.currentData())
+            cfg_set("checkout_quick_amounts", ",".join(f"{a:g}" for a in quick_amounts))
             cfg_set("require_remove_auth", "1" if self.perm_require_remove_auth.isChecked() else "0")
             cfg_set("session_gate",        "1" if self.perm_session_gate.isChecked()         else "0")
             cfg_set("allow_cart_qty_edit",  "1" if self.perm_cart_qty_edit.isChecked()       else "0")
@@ -711,6 +788,8 @@ class ManagerWindow(SupervisorWindow):
             self.biz_subtitle.setText(saved.get("subtitle", ""))
             self.biz_address.setPlainText(saved.get("address", ""))
             self.biz_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
+            self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in quick_amounts))
+            self._biz_clean = self._biz_state()
             self.biz_feedback.setText("✓  Business info saved.")
         except Exception as e:
             self.biz_feedback.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
@@ -832,7 +911,9 @@ class ManagerWindow(SupervisorWindow):
         save_btn = QPushButton("💾  Save Quick Keys"); save_btn.setFixedHeight(42)
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(self._accent_btn()); save_btn.clicked.connect(self._qk_save_manager)
-        lay.addWidget(save_btn); return w
+        lay.addWidget(save_btn)
+        self._qk_clean = self._qk_state()   # baseline for the unsaved-changes check
+        return w
 
     def _qk_save_manager(self):
         assignments = [
@@ -840,6 +921,7 @@ class ManagerWindow(SupervisorWindow):
             for sw in self._qk_widgets
         ]
         save_quick_keys(assignments)
+        self._qk_clean = self._qk_state()
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
     # ================================================================

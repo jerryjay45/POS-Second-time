@@ -48,7 +48,7 @@ A full-featured, open-source Point of Sale application for retail businesses, bu
 - Salted password hashing
 - Configurable UI zoom
 - Receipts saved as plain-text files as a backup trail
-- Multi-theme support (dark, amber, green, midnight)
+- Multi-theme support (amber, blue, green, high contrast), chosen in Manager → Business Info
 
 ---
 

@@ -1375,7 +1375,18 @@ class SupervisorWindow(BaseWindow):
         save_btn = QPushButton("💾  Save Quick Keys"); save_btn.setFixedHeight(42)
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(self._accent_btn()); save_btn.clicked.connect(self._qk_save); lay.addWidget(save_btn)
+        self._qk_clean = self._qk_state()
         return w
+
+    def _qk_state(self) -> list:
+        return [sw.selected_id() for sw in self._qk_widgets]
+
+    def _unsaved_sections(self) -> list[str]:
+        """Names of tabs holding edits that were never saved (checked on logout)."""
+        out = []
+        if hasattr(self, "_qk_clean") and self._qk_state() != self._qk_clean:
+            out.append("Quick Keys")
+        return out
 
     def _qk_save(self):
         assignments = [
@@ -1383,6 +1394,7 @@ class SupervisorWindow(BaseWindow):
             for sw in self._qk_widgets
         ]
         save_quick_keys(assignments)
+        self._qk_clean = self._qk_state()
         QMessageBox.information(self, "Saved", "Quick keys saved successfully.")
 
     # ================================================================
@@ -1397,8 +1409,17 @@ class SupervisorWindow(BaseWindow):
         self._clock.setText(n.toString("dd MMM yyyy") + "   " + n.toString("hh:mm:ss AP"))
 
     def _handle_logout(self):
-        reply = QMessageBox.question(self, "Logout", "Are you sure you want to logout?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        unsaved = self._unsaved_sections()
+        if unsaved:
+            title = "Unsaved Changes"
+            msg = (f"You have unsaved changes in: {', '.join(unsaved)}.\n\n"
+                   "Logging out will discard them. Log out anyway?")
+            default = QMessageBox.StandardButton.No
+        else:
+            title, msg = "Logout", "Are you sure you want to logout?"
+            default = QMessageBox.StandardButton.NoButton
+        reply = QMessageBox.question(self, title, msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, default)
         if reply == QMessageBox.StandardButton.Yes:
             self.logout_requested.emit(); self.force_close()
 
