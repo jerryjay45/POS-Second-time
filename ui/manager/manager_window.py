@@ -126,19 +126,6 @@ class ManagerWindow(SupervisorWindow):
         from ui.shared.tab_registry import build_role_tabs
         return build_role_tabs(self, "manager")
 
-    def _build_backup_tab(self):
-        from ui.manager.backup_tab import BackupTab
-        return BackupTab(self.user)
-
-    def _on_logout_confirmed(self):
-        """Manager logout: start a background backup if switched on."""
-        try:
-            from core import backup as bk
-            if bk.load_settings()["on_manager_logout"]:
-                bk.run_async("logout")
-        except Exception:
-            pass                       # a backup problem must never block logging out
-
     def _build_receipt_tab(self):
         from ui.manager.receipt_tab import ReceiptDesignerTab
         tab = ReceiptDesignerTab(self)

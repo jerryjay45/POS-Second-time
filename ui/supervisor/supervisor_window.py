@@ -1367,7 +1367,20 @@ class SupervisorWindow(BaseWindow):
             self.logout_requested.emit(); self.force_close()
 
     def _on_logout_confirmed(self):
-        """Hook for subclasses; runs once the user has confirmed logging out."""
+        """Runs once the user has confirmed logging out (manager and supervisor):
+        start a background backup if switched on."""
+        try:
+            from core import backup as bk
+            if bk.load_settings()["on_manager_logout"]:
+                bk.run_async("logout")
+        except Exception:
+            pass                       # a backup problem must never block logging out
+
+    def _build_backup_tab(self):
+        # Supervisors get the limited view (status, history, Back up now, Test);
+        # managers get everything. See BackupTab(limited=...).
+        from ui.manager.backup_tab import BackupTab
+        return BackupTab(self.user, limited=self.user.get("role") != "manager")
 
     # ================================================================
     # STYLE HELPERS

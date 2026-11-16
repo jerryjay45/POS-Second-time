@@ -71,8 +71,9 @@ AREAS: tuple[Area, ...] = (
         Page("pickup", "🍽  Pickup", "_build_pickup_tab", None, "manager"),
     )),
     Area("data", "💾  Data", (
+        # Supervisors get the limited view (status, history, Back up now, Test).
         Page("backup", "💾  Backup", "_build_backup_tab",
-             lambda w: w._lazy.page("backup").refresh(), "manager"),
+             lambda w: w._lazy.page("backup").refresh()),
         Page("import", "📥  Import", "_build_dbf_import_tab", None, "manager"),
         Page("postgres", "🗄  PostgreSQL", "_build_postgres_tab", None, "manager"),
     )),

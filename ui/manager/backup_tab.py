@@ -57,20 +57,26 @@ def _human_size(n: int) -> str:
 
 
 def _kind_label(kind: str) -> str:
-    return {"daily": "Daily", "logout": "Manager logout", "manual": "Manual",
+    return {"daily": "Daily", "logout": "Logout", "manual": "Manual",
             "pre-import": "Before import", "pre-restore": "Before restore"}.get(kind, kind)
 
 
 class BackupTab(QWidget):
     _backup_done = pyqtSignal(dict)          # thread -> UI
 
-    def __init__(self, user: dict, parent=None):
+    def __init__(self, user: dict, parent=None, limited: bool = False):
+        """limited=True is the supervisor view: status, history, Back up now and Test.
+        Restore, locations, schedule and retention are manager-only (restore replaces
+        all the data), so they are hidden and the handlers refuse as well."""
         super().__init__(parent)
         self.user = user
+        self.limited = limited
         self._settings = bk.load_settings()
         self._backup_done.connect(self._on_backup_done)
         self._build_ui()
         self._load_into_ui(self._settings)
+        if self.limited:
+            self._apply_limited()
         self._clean = self._snapshot()
         self.refresh()
         self._poll = QTimer(self)             # keep the status line fresh while a backup runs
@@ -98,6 +104,7 @@ class BackupTab(QWidget):
         lay = QVBoxLayout(body); lay.setContentsMargins(24, 20, 24, 20); lay.setSpacing(10)
         scroll.setWidget(body)
 
+        self._manager_only = []              # hidden in the supervisor (limited) view
         # status
         self.status_lbl = QLabel(""); self.status_lbl.setWordWrap(True)
         self.status_lbl.setStyleSheet("font-size:13px;font-weight:700;background:transparent;")
@@ -108,6 +115,7 @@ class BackupTab(QWidget):
         self.restore_btn = QPushButton("⟲  Restore…"); self.restore_btn.setFixedHeight(36)
         self.restore_btn.setStyleSheet(_btn_css()); self.restore_btn.clicked.connect(self._restore)
         actions.addWidget(self.now_btn); actions.addWidget(self.restore_btn); actions.addStretch()
+        self._manager_only.append(self.restore_btn)
         lay.addLayout(actions)
 
         # destinations
@@ -131,39 +139,45 @@ class BackupTab(QWidget):
         for text, slot in (("➕  Add folder…", self._add_dest), ("Test", self._test_dest),
                            ("Remove", self._remove_dest)):
             b = QPushButton(text); b.setFixedHeight(30); b.setStyleSheet(_btn_css()); b.clicked.connect(slot)
+            if text != "Test":
+                self._manager_only.append(b)
             row.addWidget(b)
         row.addStretch(); lay.addLayout(row)
 
-        # automatic
-        lay.addWidget(self._hdiv()); lay.addWidget(self._section("Automatic backups"))
+        # automatic + retention (manager-only: one box so the supervisor view can hide it)
+        self.settings_box = QWidget(); self.settings_box.setStyleSheet("background:transparent;")
+        ml = QVBoxLayout(self.settings_box); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10)
+        ml.addWidget(self._hdiv()); ml.addWidget(self._section("Automatic backups"))
         t = QHBoxLayout(); t.setSpacing(10)
         self.daily_cb = make_checkbox("Back up every day at", font_size=12)
         self.daily_time = QTimeEdit(); self.daily_time.setDisplayFormat("hh:mm"); self.daily_time.setFixedHeight(30)
         t.addWidget(self.daily_cb); t.addWidget(self.daily_time)
         t.addWidget(self._hint("If the computer was off then, it runs at the next start-up.")); t.addStretch()
-        lay.addLayout(t)
-        self.logout_cb = make_checkbox("When a manager logs out", font_size=12)
+        ml.addLayout(t)
+        self.logout_cb = make_checkbox("When a manager or supervisor logs out", font_size=12)
         self.import_cb = make_checkbox("Before every DBF import (the import waits for it)", font_size=12)
         self.files_cb = make_checkbox("Include receipts and price-tag labels", font_size=12)
         for cb in (self.logout_cb, self.import_cb, self.files_cb):
-            lay.addWidget(cb)
-        lay.addWidget(self._hint("Automatic backups are skipped when nothing has changed since the last one."))
+            ml.addWidget(cb)
+        ml.addWidget(self._hint("Automatic backups are skipped when nothing has changed since the last one."))
 
         # retention
-        lay.addWidget(self._hdiv()); lay.addWidget(self._section("How many to keep"))
+        ml.addWidget(self._hdiv()); ml.addWidget(self._section("How many to keep"))
         r = QHBoxLayout(); r.setSpacing(8)
         self.keep_daily = self._spin(1, 365); self.keep_weekly = self._spin(0, 104); self.keep_special = self._spin(1, 100)
         for txt, w in (("Latest", self.keep_daily), ("days, then one per week for", self.keep_weekly),
                        ("weeks.   Before-import / before-restore backups: last", self.keep_special)):
             lb = QLabel(txt); lb.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;background:transparent;")
             r.addWidget(lb); r.addWidget(w)
-        r.addStretch(); lay.addLayout(r)
+        r.addStretch(); ml.addLayout(r)
+        lay.addWidget(self.settings_box)
 
         self.feedback = QLabel(""); self.feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
         self.feedback.setAlignment(Qt.AlignmentFlag.AlignCenter); lay.addWidget(self.feedback)
         self.save_btn = QPushButton("💾  Save backup settings"); self.save_btn.setFixedHeight(38)
         self.save_btn.setStyleSheet(_btn_css(True)); self.save_btn.clicked.connect(self._save)
         lay.addWidget(self.save_btn)
+        self._manager_only += [self.settings_box, self.save_btn]
 
         # history
         lay.addWidget(self._hdiv()); lay.addWidget(self._section("History"))
@@ -179,6 +193,13 @@ class BackupTab(QWidget):
         self.hist_tbl.setMinimumHeight(220); self.hist_tbl.setStyleSheet(_table_css())
         lay.addWidget(self.hist_tbl)
         lay.addStretch()
+
+    def _apply_limited(self):
+        for w in self._manager_only:
+            w.hide()
+        for r in range(self.dest_tbl.rowCount()):       # locations: read-only
+            it = self.dest_tbl.item(r, 0)
+            it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
 
     def _hdiv(self) -> QFrame:
         f = QFrame(); f.setFixedHeight(1); f.setStyleSheet(f"background:{BORDER};border:none;")
@@ -243,6 +264,8 @@ class BackupTab(QWidget):
         return self._snapshot() != self._clean
 
     def _save(self) -> bool:
+        if self.limited:
+            return False
         s = self._collect()
         if self.daily_cb.isChecked() and not any(d["enabled"] for d in s["destinations"]):
             self._say("Tick at least one location, or switch off the daily backup.", error=True)
@@ -263,6 +286,8 @@ class BackupTab(QWidget):
     # ── destinations ─────────────────────────────────────────────────────────
 
     def _add_dest(self):
+        if self.limited:
+            return
         start = os.path.dirname(config.USER_DIR) or os.path.expanduser("~")
         path = QFileDialog.getExistingDirectory(self, "Choose a backup folder", start)
         if not path:
@@ -308,6 +333,8 @@ class BackupTab(QWidget):
         item.setForeground(Qt.GlobalColor.darkGreen if ok else Qt.GlobalColor.red)
 
     def _remove_dest(self):
+        if self.limited:
+            return
         r = self._selected_row()
         if r >= 0:
             self.dest_tbl.removeRow(r)
@@ -393,6 +420,8 @@ class BackupTab(QWidget):
     # ── restore ──────────────────────────────────────────────────────────────
 
     def _restore(self):
+        if self.limited:
+            return
         dlg = RestoreDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.chosen:
             return
