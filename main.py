@@ -72,6 +72,23 @@ def main():
     window = LoginWindow()
     window.show()
 
+    # Scheduled backups: checked every minute, run on a background thread.
+    # The first check shortly after start-up also catches a missed daily backup.
+    from PyQt6.QtCore import QTimer
+    from core import backup as _backup
+
+    def _backup_tick():
+        try:
+            if _backup.daily_due() and not _backup.is_running():
+                _backup.run_async("daily")
+        except Exception:
+            pass                       # never let a backup problem reach the till
+
+    app._backup_timer = QTimer(app)
+    app._backup_timer.timeout.connect(_backup_tick)
+    app._backup_timer.start(60_000)
+    QTimer.singleShot(5_000, _backup_tick)
+
     sys.exit(app.exec())
 
 

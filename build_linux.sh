@@ -267,16 +267,18 @@ hiddenimports += [
     $HIDDEN,
 ]
 
+# This spec lives in build_linux/, and PyInstaller resolves relative paths in a
+# spec against the spec file's own folder, so every source path is absolute.
 a = Analysis(
-    ['main.py'],
-    pathex=['.'],
+    ['$SCRIPT_DIR/main.py'],
+    pathex=['$SCRIPT_DIR'],
     binaries=binaries,
     datas=datas + [
-        ('assets',    'assets'),
-        ('ui',        'ui'),
-        ('core',      'core'),
-        ('utils',     'utils'),
-        ('config.py', '.'),
+        ('$SCRIPT_DIR/assets',    'assets'),
+        ('$SCRIPT_DIR/ui',        'ui'),
+        ('$SCRIPT_DIR/core',      'core'),
+        ('$SCRIPT_DIR/utils',     'utils'),
+        ('$SCRIPT_DIR/config.py', '.'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

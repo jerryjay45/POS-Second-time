@@ -190,6 +190,11 @@ class UserDialog(QDialog):
             self._err("Full name and username are required."); return
         if self._editing_id is None and not password:
             self._err("Password required for new user."); return
+        if self._editing_id is not None and self._is_last_active_manager() \
+                and (role != "manager" or not is_active):
+            self._err("This is the only active manager. Create or keep another "
+                      "active manager before demoting or deactivating it.")
+            return
         try:
             if self._editing_id is None:
                 add_user(full_name, username, password, role, is_active)
@@ -200,8 +205,19 @@ class UserDialog(QDialog):
         except Exception as e:
             self._err(str(e))
 
+    def _is_last_active_manager(self) -> bool:
+        """True if the user being edited is a manager and no other active manager exists."""
+        from core.db_users import get_users, count_active_managers
+        me = next((u for u in get_users(role="manager")
+                   if u["id"] == self._editing_id and u["is_active"]), None)
+        return me is not None and count_active_managers(exclude_id=self._editing_id) == 0
+
     def _delete(self):
         if not self._editing_id or self._editing_id == self._current_user_id:
+            return
+        if self._is_last_active_manager():
+            QMessageBox.warning(self, "Cannot Delete",
+                                "This is the only active manager account.")
             return
         reply = QMessageBox.question(
             self, "Delete User",

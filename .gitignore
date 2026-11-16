@@ -17,3 +17,5 @@ flatpak-build-dir/
 build-dir/
 *.flatpak
 packaging/windows/Output/
+backup/
+MerchantPOS_*.zip
