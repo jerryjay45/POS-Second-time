@@ -147,6 +147,8 @@ class ManagerWindow(SupervisorWindow):
         # Backups: destinations, schedule, retention, history, restore
         self._lazy.add("backup", "💾  Backup", self._build_backup_tab,
                        lambda: self._lazy.page("backup").refresh())
+        # Second printer at the serving station (pickup ticket). Holds unsaved edits: no refresher.
+        self._lazy.add("pickup", "🍽  Pickup", self._build_pickup_tab)
         # Then all supervisor tabs
         self._lazy.add("products", "📦  Products", self._build_products_tab,
                        lambda: self._load_products(self._pg_search))
@@ -185,6 +187,10 @@ class ManagerWindow(SupervisorWindow):
         from ui.manager.receipt_tab import ReceiptDesignerTab
         tab = ReceiptDesignerTab(self)
         return tab
+
+    def _build_pickup_tab(self):
+        from ui.manager.pickup_tab import PickupTab
+        return PickupTab(self)
 
     def _usr_refresh_on_show(self):
         """Reload users (another manager may have added/changed accounts) and

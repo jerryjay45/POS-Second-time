@@ -231,10 +231,11 @@ class _PrintBridge(QObject):
 
 
 class _PrintJob(QRunnable):
-    def __init__(self, printer, text, build, cash_drawer, bridge):
+    def __init__(self, printer, text, build, cash_drawer, bridge, label: str = ""):
         super().__init__()
         self._args   = (printer, text, build, cash_drawer)
         self._bridge = bridge
+        self._label  = label          # e.g. "Pickup printer: " — which printer failed
 
     def run(self):
         from utils.thermal_printer import PrinterError
@@ -242,10 +243,22 @@ class _PrintJob(QRunnable):
             _send_to_printer(*self._args)
         except PrinterError as e:
             print(f"[PrintManager] Auto-print error: {e}")
-            self._bridge.failed.emit(str(e))
+            self._bridge.failed.emit(f"{self._label}{e}")
         except Exception as e:
             print(f"[PrintManager] Unexpected print error: {e}")
-            self._bridge.failed.emit(f"Unexpected print error: {e}")
+            self._bridge.failed.emit(f"{self._label}Unexpected print error: {e}")
+
+
+def _queue_job(printer, text: str, build, cash_drawer: bool = False, label: str = "") -> None:
+    """Put one prepared job on the single print worker (created on first use)."""
+    global _pool, _bridge
+    if _pool is None:
+        import atexit
+        _pool = QThreadPool()
+        _pool.setMaxThreadCount(1)                 # one job at a time, in order
+        _bridge = _PrintBridge()
+        atexit.register(lambda: _pool.waitForDone(10000))  # don't drop a queued receipt on exit
+    _pool.start(_PrintJob(printer, text, build, cash_drawer, _bridge, label))
 
 
 def _auto_print_background(text: str, lines: list | None = None,
@@ -253,16 +266,9 @@ def _auto_print_background(text: str, lines: list | None = None,
     """Queue a raw-mode print on the worker thread and return immediately.
     Returns True if the job was queued (not whether it printed — a failure
     is reported later with the same "Printer Error" box)."""
-    global _pool, _bridge
     try:
         printer, build = _prepare_print(text, lines)   # config reads stay on the GUI thread
-        if _pool is None:
-            import atexit
-            _pool = QThreadPool()
-            _pool.setMaxThreadCount(1)                 # one job at a time, in order
-            _bridge = _PrintBridge()
-            atexit.register(lambda: _pool.waitForDone(10000))  # don't drop a queued receipt on exit
-        _pool.start(_PrintJob(printer, text, build, cash_drawer, _bridge))
+        _queue_job(printer, text, build, cash_drawer)
         return True
     except Exception as e:
         print(f"[PrintManager] Could not queue print job: {e}")
@@ -360,10 +366,74 @@ def print_receipt(receipt: dict, parent=None) -> bool:
         )
         if cfg_get("receipt_printer_mode", "raw").strip() == "raw":
             # Checkout path: don't make the cashier wait for the printer.
-            return _auto_print_background(text, lines=lines, cash_drawer=cash_drawer)
-        return _auto_print(text, parent, lines=lines, cash_drawer=cash_drawer)
+            ok = _auto_print_background(text, lines=lines, cash_drawer=cash_drawer)
+        else:
+            ok = _auto_print(text, parent, lines=lines, cash_drawer=cash_drawer)
+        # Second printer at the serving station. Never affects the cashier receipt's result.
+        print_pickup(receipt)
+        return ok
     except Exception as e:
         print(f"[PrintManager] print_receipt error: {e}")
+        return False
+
+
+def print_pickup(receipt: dict, test: bool = False) -> bool:
+    """Print the pickup ticket on the second printer (Manager → Pickup tab).
+
+    Does nothing (returns False) unless that feature is on and a printer is named,
+    unless `test` is True (the Test button prints even while the feature is off, as
+    long as a printer is named). Follows the receipt printer's print mode; in raw mode it
+    is queued behind the cashier receipt on the same worker, so the two always come out
+    in sale order and a slow or offline pickup printer can't freeze the till."""
+    try:
+        from utils.pickup_ticket import (load_settings, is_active, _int,
+                                         format_pickup_lines, order_number)
+        s = load_settings()
+        if not (test and s["pickup_printer_name"].strip()) and not is_active(s):
+            return False
+
+        from core.db_config import get as cfg_get
+        from utils.receipt_layout import load_layout, finalize_lines
+        from utils.thermal_printer import ThermalPrinter
+
+        lay    = load_layout()
+        cols   = _int(s["pickup_columns"], 16, 80, lay.columns)
+        mode   = cfg_get("receipt_printer_mode", "raw").strip()
+        feed   = _int(s["pickup_feed_lines"], 0, 20, 5)
+        cutter = s["pickup_has_cutter"].strip() == "1"
+        copies = _int(s["pickup_copies"], 1, 3, 1)
+
+        # Same layout rules as the receipt (character folding, margin) but its own width/feed.
+        lines = finalize_lines(format_pickup_lines(receipt, s, max(16, cols - lay.margin)),
+                               lay, feed_override=feed)
+        text  = "\n".join(t for t, _k in lines)
+
+        cashier_folder = _cashier_folder_by_user_id(receipt.get("user_id"))
+        _save_text([cashier_folder, "pickup"],
+                   f"pickup_{_safe_num(order_number(receipt) or 'test')}_{_stamp()}.txt", text)
+
+        build = None
+        if mode == "raw" and s["pickup_escpos"].strip() == "1":
+            from utils.escpos_builder import build_escpos_bytes
+            font = lay.font
+            build = lambda: build_escpos_bytes(lines, cut=cutter, font=font,
+                                               heading="double", total="normal")
+        try:
+            mm = float(cfg_get("receipt_paper_width_mm", "76") or 76)
+        except ValueError:
+            mm = 76.0
+        printer = ThermalPrinter(s["pickup_printer_name"].strip(), copies, mode,
+                                 lay.form_feed, mm, cols, lay.raster_pt)
+
+        if mode == "raw":
+            _queue_job(printer, text, build, False, label="Pickup printer: ")
+        else:                                   # raster renders with QPainter: GUI thread
+            _send_to_printer(printer, text, None, False)
+        return True
+    except Exception as e:
+        print(f"[PrintManager] Pickup print error: {e}")
+        if test:
+            raise
         return False
 
 
