@@ -302,3 +302,32 @@ def add_session_sales(session_id: int, amount: float):
             (amount, session_id)
         )
         con.commit()
+
+
+def get_sessions_page(user_id: int, limit: int = 30, offset: int = 0,
+                      date_from: str = "", date_to: str = "",
+                      number: str = "") -> list[dict]:
+    """One cashier's sessions, newest first, a page at a time.
+
+    date_from/date_to are 'YYYY-MM-DD' (inclusive). `number` matches the
+    session id as typed ('12', '#0012'). Used by the Reports history popup so
+    the dashboard never loads every session a cashier has ever had.
+    """
+    q = "SELECT * FROM sessions WHERE user_id = ?"
+    params: list = [user_id]
+    if date_from:
+        q += " AND opened_at >= ?";               params.append(date_from)
+    if date_to:
+        q += " AND opened_at < date(?, '+1 day')"; params.append(date_to)
+    number = number.lstrip("#").strip()
+    if number.isdigit():
+        q += " AND CAST(id AS TEXT) LIKE ?";      params.append(f"%{int(number)}%")
+    q += " ORDER BY opened_at DESC, id DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    with _conn() as con:
+        return [dict(r) for r in con.execute(q, params)]
+
+
+def get_latest_session(user_id: int) -> dict | None:
+    """The open session if there is one, otherwise the most recent."""
+    return get_open_session(user_id) or next(iter(get_sessions_page(user_id, 1)), None)
