@@ -121,54 +121,10 @@ class ManagerWindow(SupervisorWindow):
             open_drawer_manual(dlg.authorized_user, parent=self)
 
     def _build_manager_tabs(self):
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane{{background:{WARM_WHITE};border:none;}}
-            QTabBar::tab{{background:{WHITE};color:{LABEL_TEXT};border:none;
-            border-bottom:2px solid transparent;padding:10px 16px;
-            font-size:12px;font-weight:500;margin-right:2px;}}
-            QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
-            QTabBar::tab:hover{{color:{DARK_CARD};}}
-        """)
-        # Manager-only tabs first
-        # Tabs are built the first time they are opened and refreshed when the
-        # user returns to them (see ui/shared/lazy_tabs.py). The Business tab
-        # (settings forms) and Import tab have no refresher: they hold the
-        # user's unsaved edits.
-        from ui.shared.lazy_tabs import LazyTabs
-        self._lazy = LazyTabs(self.tabs)
-        self._lazy.add("users", "👥  Users", self._build_users_tab,
-                       self._usr_refresh_on_show)
-        self._lazy.add("business", "🏢  Business", self._build_business_tab)
-        # Receipt designer: printer profiles, paper/feed, receipt look, live preview,
-        # calibration, export/import. Reloads on return unless it has unsaved edits.
-        self._lazy.add("receipt", "🖨  Receipt", self._build_receipt_tab,
-                       lambda: self._lazy.page("receipt").reload_if_clean())
-        # Backups: destinations, schedule, retention, history, restore
-        self._lazy.add("backup", "💾  Backup", self._build_backup_tab,
-                       lambda: self._lazy.page("backup").refresh())
-        # Second printer at the serving station (pickup ticket). Holds unsaved edits: no refresher.
-        self._lazy.add("pickup", "🍽  Pickup", self._build_pickup_tab)
-        # Then all supervisor tabs
-        self._lazy.add("products", "📦  Products", self._build_products_tab,
-                       lambda: self._load_products(self._pg_search))
-        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
-                       self._rpt_refresh_on_show)
-        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
-                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
-        # void_refund_tab.py was retired — reuse the same inline void/refund
-        # tab-builder inherited from SupervisorWindow (already reworked to
-        # use per-item quantity refunds against the fixed reconciliation logic).
-        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
-                       self._vr_refresh_on_show)
-        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
-                       lambda: self._lazy.page("stock")._refresh_all())
-        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
-                       lambda: self._lazy.page("pricetags")._load_table())
-        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
-        self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
-        self._lazy.start(0)
-        return self.tabs
+        # Same areas as the supervisor, plus the manager-only pages
+        # (see ui/shared/tab_registry.py).
+        from ui.shared.tab_registry import build_role_tabs
+        return build_role_tabs(self, "manager")
 
     def _build_backup_tab(self):
         from ui.manager.backup_tab import BackupTab

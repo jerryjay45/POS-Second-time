@@ -72,6 +72,12 @@ class LazyTabs:
         if e and e["page"] is not None:
             self._run_refresher(e)
 
+    def refresh_current(self) -> None:
+        """Run the refresher of the tab that is showing now (if it is built)."""
+        i = self._tabs.currentIndex()
+        if 0 <= i < len(self._entries) and self._entries[i]["page"] is not None:
+            self._run_refresher(self._entries[i])
+
     # ── internals ────────────────────────────────────────────────────────
     def _entry(self, key: str):
         return next((e for e in self._entries if e["key"] == key), None)
