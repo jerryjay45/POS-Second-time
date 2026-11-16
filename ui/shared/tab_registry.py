@@ -42,7 +42,7 @@ class Area(NamedTuple):
 
 
 # Refreshers reload table data only, never the user's input (see lazy_tabs.py).
-# Forms that hold unsaved edits (Quick Keys, Business, Pickup, Import) have none.
+# Forms that hold unsaved edits (Quick Keys, Business, Tax, Permissions, Pickup, Import ...) have none.
 AREAS: tuple[Area, ...] = (
     Area("sales", "💰  Sales", (
         Page("reports", "📊  Reports", "_build_reports_tab",
@@ -60,6 +60,9 @@ AREAS: tuple[Area, ...] = (
         Page("pricetags", "🏷  Price Tags", "_build_price_tag_tab",
              lambda w: w._lazy.page("pricetags")._load_table()),
         Page("quickkeys", "⌨  Quick Keys", "_build_quickkeys_tab"),
+        # "&&": a single "&" in a Qt tab title is a keyboard-shortcut marker and gets swallowed.
+        Page("groups", "📂  Groups && Discounts", "_build_groups_panel_page", None, "manager"),
+        Page("stocksettings", "⚙  Stock Settings", "_build_stock_settings_tab", None, "manager"),
     )),
     Area("printing", "🖨  Printing", (
         # The receipt designer reloads on return unless it has unsaved edits.
@@ -71,11 +74,15 @@ AREAS: tuple[Area, ...] = (
         Page("backup", "💾  Backup", "_build_backup_tab",
              lambda w: w._lazy.page("backup").refresh(), "manager"),
         Page("import", "📥  Import", "_build_dbf_import_tab", None, "manager"),
+        Page("postgres", "🗄  PostgreSQL", "_build_postgres_tab", None, "manager"),
     )),
     Area("setup", "🔧  Setup", (
         Page("users", "👥  Users", "_build_users_tab",
              lambda w: w._usr_refresh_on_show(), "manager"),
+        Page("permissions", "🔒  Permissions", "_build_permissions_tab", None, "manager"),
         Page("business", "🏢  Business", "_build_business_tab", None, "manager"),
+        Page("tax", "💲  Tax && Currency", "_build_tax_tab", None, "manager"),
+        Page("checkout", "🛒  Checkout && Appearance", "_build_checkout_tab", None, "manager"),
     )),
 )
 
