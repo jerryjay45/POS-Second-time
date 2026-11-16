@@ -782,6 +782,8 @@ class ManagerWindow(SupervisorWindow):
                 out.append(label)
         if self._lazy.is_built("receipt") and getattr(self._lazy.page("receipt"), "_dirty", False):
             out.append("Receipt")
+        if self._lazy.is_built("pickup") and self._lazy.page("pickup").is_dirty():
+            out.append("Pickup")
         if self._lazy.is_built("backup") and self._lazy.page("backup").is_dirty():
             out.append("Backup")
         return out

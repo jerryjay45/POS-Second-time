@@ -1328,6 +1328,8 @@ class SupervisorWindow(BaseWindow):
         out = []
         if hasattr(self, "_qk_clean") and self._qk_state() != self._qk_clean:
             out.append("Quick Keys")
+        if self._lazy.is_built("printersetup") and self._lazy.page("printersetup").is_dirty():
+            out.append("Printer Setup")
         return out
 
     def _qk_save(self):
@@ -1375,6 +1377,10 @@ class SupervisorWindow(BaseWindow):
                 bk.run_async("logout")
         except Exception:
             pass                       # a backup problem must never block logging out
+
+    def _build_printer_setup_tab(self):
+        from ui.shared.printer_setup_tab import PrinterSetupTab
+        return PrinterSetupTab(self)
 
     def _build_backup_tab(self):
         # Supervisors get the limited view (status, history, Back up now, Test);

@@ -65,10 +65,14 @@ AREAS: tuple[Area, ...] = (
         Page("stocksettings", "⚙  Stock Settings", "_build_stock_settings_tab", None, "manager"),
     )),
     Area("printing", "🖨  Printing", (
-        # The receipt designer reloads on return unless it has unsaved edits.
-        Page("receipt", "🧾  Receipt", "_build_receipt_tab",
+        # Printer Setup is the simple page (supervisor + manager); the two "advanced" pages
+        # write the same settings, so each reloads on return unless it has unsaved edits.
+        Page("printersetup", "🖨  Printer Setup", "_build_printer_setup_tab",
+             lambda w: w._lazy.page("printersetup").reload_if_clean()),
+        Page("receipt", "🧾  Receipt (advanced)", "_build_receipt_tab",
              lambda w: w._lazy.page("receipt").reload_if_clean(), "manager"),
-        Page("pickup", "🍽  Pickup", "_build_pickup_tab", None, "manager"),
+        Page("pickup", "🍽  Pickup (advanced)", "_build_pickup_tab",
+             lambda w: w._lazy.page("pickup").reload_if_clean(), "manager"),
     )),
     Area("data", "💾  Data", (
         # Supervisors get the limited view (status, history, Back up now, Test).
