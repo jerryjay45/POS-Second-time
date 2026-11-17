@@ -200,18 +200,20 @@ class CashDrawerDialog(QDialog):
         r.addWidget(self.note_edit)
 
         # paid-outs
-        self.po_head = _label("Paid out of the drawer", size=11, bold=True, color=LABEL_TEXT)
+        self.po_head = _label("Paid out / safe drop", size=11, bold=True, color=LABEL_TEXT)
         r.addWidget(self.po_head)
         self.po_form = QFrame(); self.po_form.setStyleSheet("QFrame{border:none;background:transparent;}")
         pr = QHBoxLayout(self.po_form); pr.setContentsMargins(0, 0, 0, 0)
         self.po_spin = _spin()
-        self.po_reason = QLineEdit(); self.po_reason.setPlaceholderText("Reason (required)")
+        self.po_reason = QLineEdit(); self.po_reason.setPlaceholderText("Reason (needed for a paid-out)")
         self.po_reason.setMaxLength(120); self.po_reason.setFixedHeight(34)
         self.po_reason.setStyleSheet(
             f"QLineEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};border-radius:7px;"
             f"padding:0 10px;font-size:12px;}}QLineEdit:focus{{border-color:{AMBER};}}")
-        self.po_btn = _btn("Add paid-out"); self.po_btn.clicked.connect(self._save_paid_out)
-        pr.addWidget(self.po_spin); pr.addWidget(self.po_reason, stretch=1); pr.addWidget(self.po_btn)
+        self.po_btn = _btn("Paid-out"); self.po_btn.clicked.connect(lambda: self._save_paid_out("paid_out"))
+        self.sd_btn = _btn("Safe drop"); self.sd_btn.clicked.connect(lambda: self._save_paid_out("safe_drop"))
+        pr.addWidget(self.po_spin); pr.addWidget(self.po_reason, stretch=1)
+        pr.addWidget(self.po_btn); pr.addWidget(self.sd_btn)
         r.addWidget(self.po_form)
         self.po_box = QVBoxLayout(); self.po_box.setSpacing(2)
         r.addLayout(self.po_box)
@@ -272,6 +274,8 @@ class CashDrawerDialog(QDialog):
                       color=RED if summary["cash_refunds"] else DARK_CARD)
             if summary["paid_outs"]:
                 self._row("Paid out", money(-summary["paid_outs"]), color=RED)
+            if summary["safe_drops"]:
+                self._row("Safe drops", money(-summary["safe_drops"]), color=RED)
             self._row("Expected cash" + (" so far" if is_open else ""), money(summary["expected"]), bold=True)
             if summary["counted"] is not None:
                 self._row("Counted cash", money(summary["counted"]), bold=True)
@@ -326,7 +330,9 @@ class CashDrawerDialog(QDialog):
         for p in paid[:8]:
             voided = bool(p["voided_at"])
             row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
-            line = f"{str(p['recorded_at'])[5:16]} · {money(p['amount'])} · {p['reason']} · {p['recorded_by_name'] or '?'}"
+            what = "Safe drop" if p["kind"] == "safe_drop" else "Paid out"
+            line = (f"{str(p['recorded_at'])[5:16]} · {what} {money(p['amount'])} · {p['reason']}"
+                    f" · {p['recorded_by_name'] or '?'}")
             if voided:
                 line += f" · VOIDED by {p['voided_by_name'] or '?'}"
             lab = _label(line, size=11, color=MUTED if voided else LABEL_TEXT, wrap=True)
@@ -378,9 +384,9 @@ class CashDrawerDialog(QDialog):
     def _save_count(self):
         self._save(set_session_count, self.count_spin.value())
 
-    def _save_paid_out(self):
+    def _save_paid_out(self, kind: str = "paid_out"):
         try:
-            add_paid_out(self._sid, self.po_spin.value(), self.po_reason.text(), self._user["id"])
+            add_paid_out(self._sid, self.po_spin.value(), self.po_reason.text(), self._user["id"], kind)
         except (ValueError, PermissionError) as e:
             QMessageBox.warning(self, "Cash drawer", str(e))
             return
@@ -389,7 +395,7 @@ class CashDrawerDialog(QDialog):
         self._refresh()
 
     def _void_paid_out(self, paid_out_id: int):
-        if QMessageBox.question(self, "Void paid-out", "Void this paid-out? Expected cash goes back up by "
+        if QMessageBox.question(self, "Void entry", "Void this entry? Expected cash goes back up by "
                                 "that amount, and the entry stays in the list as voided.") \
                 != QMessageBox.StandardButton.Yes:
             return

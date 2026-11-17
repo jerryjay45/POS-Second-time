@@ -109,3 +109,79 @@ class OldDatabaseUpgrade(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafeDrops(unittest.TestCase):
+    def setUp(self):
+        C.set_many({"cash_drawer_enabled": "1", "cash_drawer_float": "100"})
+        self.cashier, self.sup, self.mgr = _user("cashier"), _user("supervisor"), _user("manager")
+        self.sid = U.open_session(self.cashier, opened_by=self.sup)
+
+    def summary(self):
+        return CD.session_cash_summary(U.get_session_by_id(self.sid))
+
+    def test_safe_drop_lowers_expected_and_is_its_own_line(self):
+        _sale(self.cashier, self.sid, 300, "cash")
+        U.add_paid_out(self.sid, 200, "", self.sup, kind="safe_drop")     # no reason needed
+        U.add_paid_out(self.sid, 10, "ice", self.sup)
+        s = self.summary()
+        self.assertEqual((s["safe_drops"], s["paid_outs"]), (200, 10))
+        self.assertEqual(s["expected"], 100 + 300 - 200 - 10)
+
+    def test_safe_drop_without_reason_gets_a_default_but_paid_out_still_needs_one(self):
+        U.add_paid_out(self.sid, 50, "  ", self.sup, kind="safe_drop")
+        self.assertEqual(U.get_paid_outs(self.sid)[0]["reason"], "Safe drop")
+        with self.assertRaises(ValueError):
+            U.add_paid_out(self.sid, 50, "  ", self.sup)
+
+    def test_same_rules_as_paid_outs(self):
+        with self.assertRaises(PermissionError):
+            U.add_paid_out(self.sid, 50, "", self.cashier, kind="safe_drop")
+        pid = U.add_paid_out(self.sid, 50, "", self.sup, kind="safe_drop")
+        with self.assertRaises(PermissionError):
+            U.void_paid_out(pid, self.sup)
+        U.void_paid_out(pid, self.mgr)
+        self.assertEqual(self.summary()["expected"], 100)
+        with self.assertRaises(ValueError):
+            U.add_paid_out(self.sid, 5, "x", self.sup, kind="bogus")
+
+    def test_variance_balances_after_drop(self):
+        _sale(self.cashier, self.sid, 150, "cash")
+        U.add_paid_out(self.sid, 200, "", self.sup, kind="safe_drop")
+        U.close_session(self.sid, 150, closed_by=self.sup)
+        U.set_session_count(self.sid, 50, self.sup)
+        self.assertEqual(self.summary()["variance"], 0)
+
+    def test_database_from_the_previous_patch_gets_the_kind_column(self):
+        with U._conn() as con:
+            con.execute("DROP TABLE session_paid_outs")
+            con.execute("""CREATE TABLE session_paid_outs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+                amount REAL NOT NULL, reason TEXT NOT NULL, recorded_by INTEGER,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                voided_by INTEGER, voided_at TEXT)""")
+            con.execute("INSERT INTO session_paid_outs (session_id, amount, reason) VALUES (?, 12, 'old row')",
+                        (self.sid,))
+            con.commit()
+        U.init_db()
+        with U._conn() as con:
+            self.assertIn("kind", {r[1] for r in con.execute("PRAGMA table_info(session_paid_outs)")})
+        self.assertEqual(U.get_paid_outs(self.sid)[0]["kind"], "paid_out")      # old rows stay paid-outs
+        self.assertEqual(self.summary()["paid_outs"], 12)
+
+
+class XReport(unittest.TestCase):
+    def test_x_report_is_titled_and_includes_the_cash_section(self):
+        from utils import receipt_formatter as F
+        C.set_many({"cash_drawer_enabled": "1", "cash_drawer_float": "100"})
+        cashier, sup = _user("cashier"), _user("supervisor")
+        sid = U.open_session(cashier)
+        U.add_paid_out(sid, 20, "", sup, kind="safe_drop")
+        s = U.get_session_by_id(sid)
+        from core.db_checkout import session_totals
+        lines = F.format_session_lines(s, session_totals(sid), "Cashier", {}, report_type="x",
+                                       cash=CD.session_cash_summary(s))
+        text = "\n".join(t for t, _k in lines)
+        self.assertIn("X-REPORT", text)
+        self.assertIn("Safe drops:", text)
+        self.assertIn("Expected so far:", text)

@@ -518,6 +518,8 @@ def _cash_drawer_section(c: dict, currency: str, w: int) -> list[Line]:
         lines.append((_right("Cash refunds:", _signed(-c["cash_refunds"], currency), w), "normal"))
     if c.get("paid_outs"):
         lines.append((_right("Paid out:", _signed(-c["paid_outs"], currency), w), "normal"))
+    if c.get("safe_drops"):
+        lines.append((_right("Safe drops:", _signed(-c["safe_drops"], currency), w), "normal"))
     lines.append((_div(w, "-"), "div"))
     lines.append((_right("Expected cash:" if not c["is_open"] else "Expected so far:",
                          _cur(c["expected"], currency), w), "total"))
@@ -549,7 +551,9 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
     """
     cash        — core.cash_drawer.session_cash_summary(); adds a CASH DRAWER section to the
                   full and summary reports (None = the session recorded no float).
-    report_type — 'full' (line items + product totals + group totals),
+    report_type — 'x' (interim totals for a session that is still open: summary content,
+                  clearly titled so it isn't mistaken for the closing Z-report),
+                  'full' (line items + product totals + group totals),
                   'products' (product totals only — a focused report,
                   no per-receipt line items or group breakdown), or
                   'summary' (totals only, no product-level detail).
@@ -557,7 +561,8 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
     w = width if width is not None else get_width()
     lines = _header(biz, w)
 
-    titles = {"full": "FULL Z-REPORT", "products": "PRODUCT SUMMARY REPORT"}
+    titles = {"full": "FULL Z-REPORT", "products": "PRODUCT SUMMARY REPORT",
+              "x": "X-REPORT (SESSION STILL OPEN)"}
     title = titles.get(report_type, "SESSION SUMMARY")
     lines.append((_center(title, w), "title"))
     lines.append((_div(w), "div"))

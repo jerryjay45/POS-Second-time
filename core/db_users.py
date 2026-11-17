@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS session_paid_outs (
     session_id  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     amount      REAL    NOT NULL CHECK(amount > 0),
     reason      TEXT    NOT NULL,
+    kind        TEXT    NOT NULL DEFAULT 'paid_out',     -- 'paid_out' or 'safe_drop'
     recorded_by INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
     recorded_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     voided_by   INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
@@ -143,6 +144,10 @@ def init_db():
                          ("counted_at",   "TEXT DEFAULT NULL")):
             if col not in cols:
                 con.execute(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}")
+        # Safe drops share the paid-outs table; older copies of it have no kind column.
+        po_cols = {r[1] for r in con.execute("PRAGMA table_info(session_paid_outs)")}
+        if po_cols and "kind" not in po_cols:
+            con.execute("ALTER TABLE session_paid_outs ADD COLUMN kind TEXT NOT NULL DEFAULT 'paid_out'")
         con.commit()
 
 
@@ -399,13 +404,20 @@ def get_cash_log(session_id: int, limit: int = 20) -> list[dict]:
 # can void one, at any time; the row stays, marked with who voided it. A voided paid-out no
 # longer reduces expected cash.
 
-def add_paid_out(session_id: int, amount: float, reason: str, recorded_by: int) -> int:
+def add_paid_out(session_id: int, amount: float, reason: str, recorded_by: int,
+                 kind: str = "paid_out") -> int:
+    """kind 'paid_out' (an expense: needs a reason) or 'safe_drop' (cash moved to the safe:
+    the reason is optional). Both lower expected cash; reports show them on separate lines."""
+    if kind not in ("paid_out", "safe_drop"):
+        raise ValueError("Unknown kind of cash removal.")
     amount = _clean_amount(amount)
     if amount <= 0:
         raise ValueError("Enter an amount greater than 0.")
     reason = (reason or "").strip()[:120]
     if not reason:
-        raise ValueError("Enter a reason for the paid-out.")
+        if kind == "paid_out":
+            raise ValueError("Enter a reason for the paid-out.")
+        reason = "Safe drop"
     with _conn() as con:
         if _role_of(con, recorded_by) not in ("supervisor", "manager"):
             raise PermissionError("Only a supervisor or manager can record a paid-out.")
@@ -418,8 +430,8 @@ def add_paid_out(session_id: int, amount: float, reason: str, recorded_by: int) 
         if s["status"] != "open" and s["counted_cash"] is not None:
             raise ValueError("The cash has already been counted for this session. A manager can "
                              "correct the count instead.")
-        cur = con.execute("INSERT INTO session_paid_outs (session_id, amount, reason, recorded_by) "
-                          "VALUES (?, ?, ?, ?)", (session_id, amount, reason, recorded_by))
+        cur = con.execute("INSERT INTO session_paid_outs (session_id, amount, reason, kind, recorded_by) "
+                          "VALUES (?, ?, ?, ?, ?)", (session_id, amount, reason, kind, recorded_by))
         con.commit()
         return cur.lastrowid
 
@@ -441,7 +453,7 @@ def void_paid_out(paid_out_id: int, voided_by: int) -> None:
 
 def get_paid_outs(session_id: int, include_voided: bool = True) -> list[dict]:
     """A session's paid-outs, newest first, with the names of who recorded / voided them."""
-    q = """SELECT p.id, p.amount, p.reason, p.recorded_at, p.voided_at,
+    q = """SELECT p.id, p.amount, p.reason, p.kind, p.recorded_at, p.voided_at,
                   ru.full_name AS recorded_by_name, vu.full_name AS voided_by_name
            FROM session_paid_outs p
            LEFT JOIN users ru ON ru.id = p.recorded_by
@@ -453,10 +465,14 @@ def get_paid_outs(session_id: int, include_voided: bool = True) -> list[dict]:
         return [dict(r) for r in con.execute(q + " ORDER BY p.id DESC", (session_id,))]
 
 
-def paid_out_total(session_id: int) -> float:
+def paid_out_total(session_id: int, kind: str | None = None) -> float:
+    """Sum of a session's un-voided paid-outs and/or safe drops (kind=None adds both)."""
+    q = "SELECT COALESCE(SUM(amount), 0) FROM session_paid_outs WHERE session_id = ? AND voided_at IS NULL"
+    params: list = [session_id]
+    if kind:
+        q += " AND kind = ?"; params.append(kind)
     with _conn() as con:
-        v = con.execute("SELECT COALESCE(SUM(amount), 0) FROM session_paid_outs "
-                        "WHERE session_id = ? AND voided_at IS NULL", (session_id,)).fetchone()[0]
+        v = con.execute(q, params).fetchone()[0]
     return round(v or 0.0, 2)
 
 

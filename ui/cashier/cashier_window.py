@@ -486,6 +486,12 @@ class CashierWindow(BaseWindow):
         bw_lay.addWidget(price_btn)
         bw_lay.addWidget(remove_btn)
         bw_lay.addWidget(drawer_btn)
+        sup_btn = QPushButton("🛡  Supervisor")
+        sup_btn.setFixedHeight(36)
+        sup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sup_btn.setStyleSheet(self._pill_btn_style())
+        sup_btn.clicked.connect(self._open_supervisor_menu)
+        bw_lay.addWidget(sup_btn)
         lay.addWidget(btn_wrap)
         # Reprint/last-change now display below the action buttons — see
         # the comments above _reprint_btn/_change_frame's construction for
@@ -1173,6 +1179,47 @@ class CashierWindow(BaseWindow):
             for it in dlg.voided_items:
                 if it in self.cart: self.cart.remove(it)
             self._refresh_table(); self._update_totals()
+
+    def _open_supervisor_menu(self):
+        """Supervisor button: one supervisor/manager password, then a short menu (paid-out,
+        safe drop, change float, X-report, end of shift). See ui/shared/supervisor_tools_dialog.py."""
+        from ui.shared.drawer_auth_dialog import DrawerAuthDialog
+        from ui.shared.supervisor_tools_dialog import SupervisorToolsDialog
+        auth = DrawerAuthDialog(
+            parent=self, title="Supervisor",
+            message="A supervisor or manager must sign in to use these tools.",
+            button_text="Continue")
+        if not auth.exec():
+            return
+        menu = SupervisorToolsDialog(self, self._session_id, auth.authorized_user,
+                                     carts_empty=not any(self.carts))
+        menu.exec()
+        if menu.end_shift_requested:
+            self._end_shift(menu.authorised_user)
+
+    def _end_shift(self, supervisor: dict):
+        """Close this cashier's session as `supervisor`, offer the cash count, log out."""
+        from core.db_users import close_session, get_session_by_id
+        from core.db_checkout import session_totals
+        sid = self._session_id
+        if not sid:
+            return
+        closed = close_session(sid, session_totals(sid).get("total_sales", 0), closed_by=supervisor["id"])
+        if not closed:
+            QMessageBox.warning(self, "End of shift", "This session was already closed.")
+            return
+        self._session_id = None            # set first, so our own session_closed handler ignores it
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if hasattr(app, "session_closed"):
+            app.session_closed.emit(sid)   # lets open supervisor/manager screens refresh
+        fresh = get_session_by_id(sid)
+        if fresh and fresh.get("float_amount") is not None:
+            # Same as closing from Reports: count now, or leave it pending for later.
+            from ui.shared.cash_drawer_dialogs import CashDrawerDialog
+            CashDrawerDialog(self, sid, supervisor, focus_count=True).exec()
+        self.logout_requested.emit()
+        self.force_close()
 
     def _open_drawer_manual(self):
         """Open Drawer button — a no-sale drawer open, always supervisor/

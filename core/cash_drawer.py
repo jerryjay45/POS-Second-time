@@ -4,7 +4,7 @@ core/cash_drawer.py — expected cash, counted cash and variance for a session.
 The rules live here (and nowhere in the UI) so the dashboard, the Z-report and the tests
 all agree:
 
-    expected = opening float + cash sales - cash refunds - paid-outs
+    expected = opening float + cash sales - cash refunds - paid-outs - safe drops
     variance = counted cash  - expected          (negative = the drawer is short)
 
 Cash sales are what session_tender_summary() already reports (a split sale contributes only
@@ -28,9 +28,9 @@ def standard_float() -> float:
 
 
 def compute_expected(float_amount: float, cash_sales: float, cash_refunds: float,
-                     paid_outs: float = 0.0) -> float:
+                     paid_outs: float = 0.0, safe_drops: float = 0.0) -> float:
     return round((float_amount or 0.0) + (cash_sales or 0.0) - (cash_refunds or 0.0)
-                 - (paid_outs or 0.0), 2)
+                 - (paid_outs or 0.0) - (safe_drops or 0.0), 2)
 
 
 def compute_variance(counted: float | None, expected: float) -> float | None:
@@ -46,8 +46,9 @@ def session_cash_summary(session: dict | None) -> dict | None:
     from core.db_users import get_user_by_id, paid_out_total, count_drawer_opens
     sales = round(session_tender_summary(session["id"])["cash"] or 0.0, 2)
     refunds = session_cash_refunds(session["id"])
-    paid_outs = paid_out_total(session["id"])
-    expected = compute_expected(session["float_amount"], sales, refunds, paid_outs)
+    paid_outs  = paid_out_total(session["id"], "paid_out")
+    safe_drops = paid_out_total(session["id"], "safe_drop")
+    expected = compute_expected(session["float_amount"], sales, refunds, paid_outs, safe_drops)
     counted = session.get("counted_cash")
     counter = get_user_by_id(session["counted_by"]) if session.get("counted_by") else None
     return {
@@ -55,6 +56,7 @@ def session_cash_summary(session: dict | None) -> dict | None:
         "cash_sales":   sales,
         "cash_refunds": refunds,
         "paid_outs":    paid_outs,
+        "safe_drops":   safe_drops,
         "no_sale_opens": count_drawer_opens(session["id"]),
         "expected":     expected,
         "counted":      None if counted is None else round(counted, 2),

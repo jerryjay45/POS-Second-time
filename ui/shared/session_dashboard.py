@@ -282,6 +282,8 @@ class SessionDashboard(QScrollArea):
                          color=RED if c["cash_refunds"] else DARK_CARD))
         if c.get("paid_outs"):
             L.addWidget(_row("Paid out", m(-c["paid_outs"]), color=RED))
+        if c.get("safe_drops"):
+            L.addWidget(_row("Safe drops", m(-c["safe_drops"]), color=RED))
         L.addWidget(_row("Expected cash" + (" so far" if c["is_open"] else ""), m(c["expected"]),
                          bold=True, shaded=True))
         if c["counted"] is not None:
