@@ -694,6 +694,39 @@ def session_voids_refunds(session_id: int, limit: int = 6) -> dict:
     }
 
 
+def session_cash_refunds(session_id: int) -> float:
+    """Cash handed back to customers for partial refunds on this session's receipts.
+
+    Only receipts that are still 'completed' count: a fully refunded or voided receipt is
+    already left out of the session's cash sales, so subtracting it again would count it
+    twice. A cash sale's refund is all cash; a split sale's refund is split in the same
+    proportion as the sale was paid; card sales never touch the drawer. Exchanges move no
+    recorded cash and are not counted. Like every session report here, a refund belongs to
+    the session the ORIGINAL sale was rung in.
+    """
+    with _conn() as con:
+        v = con.execute(
+            """SELECT COALESCE(SUM(CASE r.payment_method
+                        WHEN 'cash'  THEN rf.amount
+                        WHEN 'split' THEN CASE WHEN r.total > 0
+                                               THEN rf.amount * (r.total - COALESCE(r.card_amount, 0)) / r.total
+                                               ELSE 0 END
+                        ELSE 0 END), 0) AS cash_out
+               FROM refunds rf JOIN receipts r ON r.id = rf.receipt_id
+               WHERE r.session_id = ? AND r.status = 'completed'
+                 AND rf.refund_type IN ('partial', 'full')""",
+            (session_id,)
+        ).fetchone()["cash_out"]
+    return round(v or 0.0, 2)
+
+
+def _cash_summary_for(session_id: int):
+    from core.db_users import get_session_by_id
+    from core.cash_drawer import session_cash_summary      # imported late: it imports this module
+    session = get_session_by_id(session_id)
+    return session_cash_summary(session) if session else None
+
+
 def session_dashboard_data(session_id: int) -> dict:
     """Everything the Reports dashboard shows for one session."""
     return {
@@ -703,4 +736,5 @@ def session_dashboard_data(session_id: int) -> dict:
         "hourly": session_hourly_sales(session_id),
         "top":    session_top_items(session_id),
         "vr":     session_voids_refunds(session_id),
+        "cash":   _cash_summary_for(session_id),      # None unless the session tracks a float
     }

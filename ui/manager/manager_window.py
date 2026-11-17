@@ -31,6 +31,7 @@ from core.db_config   import (
     get_business, update_business, get, set as cfg_set, set_many,
     clean_lines, BUSINESS_TEXT_MAX,
     gct_rate, get_pg_config, save_pg_config, get_quick_keys, save_quick_keys,
+    get_bool, get_float,
 )
 from core.db_products import get_products, get_product_by_id, get_groups, add_group, delete_group, update_group_margin, recalculate_all_cases
 from ui.shared.checkbox import make_checkbox
@@ -371,6 +372,54 @@ class ManagerWindow(SupervisorWindow):
         page = self._settings_footer(scroll, fw, lay, "chk_feedback", "💾  Save Checkout && Appearance", self._chk_save)
         self._chk_load(); self._chk_clean = self._chk_state()
         return page
+
+    # ── Setup → Cash Drawer ─────────────────────────────────────────
+    def _build_cash_drawer_tab(self):
+        scroll, fw, lay = self._settings_page("Cash Drawer")
+        box, pb = self._toggle_frame()
+        self.cd_enabled, g = self._toggle_block(
+            "Track the cash drawer (opening float, counted cash and variance)",
+            "When on, every new session starts with the standard float. A supervisor or manager "
+            "counts the drawer when the session closes, and the Reports tab and the Z-report show "
+            "expected cash, counted cash and the variance. When off, none of this appears anywhere.")
+        pb.addLayout(g)
+        lay.addWidget(box)
+        form = QFormLayout(); form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.cd_float = QDoubleSpinBox(); self.cd_float.setRange(0, 1_000_000); self.cd_float.setDecimals(2)
+        self.cd_float.setSingleStep(5); self.cd_float.setFixedHeight(36); self.cd_float.setFixedWidth(160)
+        self.cd_float.setStyleSheet(self._spin_style())
+        form.addRow(self._flabel("Standard float"),
+                    self._hinted(self.cd_float,
+                                 "The cash every session starts with. Sessions that open automatically at "
+                                 "login use it. Each session keeps the amount it opened with, so changing "
+                                 "this never alters old sessions."))
+        lay.addLayout(form)
+        lay.addWidget(self._fhint(
+            "For one shift that needs a different amount, a supervisor or manager can change that "
+            "session's float from the Cash button on the Reports tab, or enter it when opening the "
+            "session by hand. Only a manager can correct a count once it is saved."))
+        self.cd_enabled.toggled.connect(self.cd_float.setEnabled)
+        page = self._settings_footer(scroll, fw, lay, "cd_feedback", "💾  Save Cash Drawer", self._cd_save)
+        self._cd_load(); self._cd_clean = self._cd_state()
+        return page
+
+    def _cd_load(self):
+        self.cd_enabled.setChecked(get_bool("cash_drawer_enabled", False))
+        self.cd_float.setValue(get_float("cash_drawer_float", 0.0))
+        self.cd_float.setEnabled(self.cd_enabled.isChecked())
+
+    def _cd_state(self):
+        return (self.cd_enabled.isChecked(), round(self.cd_float.value(), 2))
+
+    def _cd_save(self):
+        try:
+            set_many({"cash_drawer_enabled": "1" if self.cd_enabled.isChecked() else "0",
+                      "cash_drawer_float": f"{self.cd_float.value():.2f}"})
+            self._cd_clean = self._cd_state()
+            self._flash("cd_feedback", "✓  Cash drawer settings saved. New sessions use them.")
+        except Exception as e:
+            self._flash("cd_feedback", str(e), ok=False)
 
     # ── Setup → Permissions ─────────────────────────────────────────
     def _build_permissions_tab(self):
@@ -769,6 +818,7 @@ class ManagerWindow(SupervisorWindow):
         ("_biz_clean",  "_biz_state",  "Business Info"),
         ("_tax_clean",  "_tax_state",  "Tax & Currency"),
         ("_chk_clean",  "_chk_state",  "Checkout & Appearance"),
+        ("_cd_clean",   "_cd_state",   "Cash Drawer"),
         ("_perm_clean", "_perm_state", "Permissions"),
         ("_stk_clean",  "_stk_state",  "Stock Settings"),
         ("_grp_clean",  "_grp_state",  "Groups & Discounts"),

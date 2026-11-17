@@ -9,6 +9,8 @@ Single-session shift report used by the Reports tab (supervisor + manager).
   SessionHistoryDialog - paged, searchable list of one cashier's past sessions
   DashboardLoader   - runs the queries off the UI thread
 
+The Cash Drawer panel appears only for sessions that recorded a float (Setup -> Cash Drawer).
+
 Everything here is display-only: opening, closing and printing sessions stays
 in SupervisorWindow so those code paths are unchanged.
 """
@@ -174,7 +176,8 @@ class SessionDashboard(QScrollArea):
         self.tender_panel, self.tender_lay = _panel("Tender & Financial Summary")
         self.top_panel,    self.top_lay    = _panel("Top Selling Items")
         self.vr_panel,     self.vr_lay     = _panel("Voids & Refunds")
-        self._panels = [self.sales_panel, self.tender_panel, self.vr_panel, self.top_panel]
+        self.cash_panel,   self.cash_lay   = _panel("Cash Drawer")
+        self._panels = [self.sales_panel, self.tender_panel, self.vr_panel, self.top_panel, self.cash_panel]
         self._cols = 0
         self._layout_panels(3)
         self.clear()
@@ -200,8 +203,9 @@ class SessionDashboard(QScrollArea):
         for lab in self.cards.values():
             lab.setText("—")
         self.chart.set_data([])
-        for lay in (self.tender_lay, self.top_lay, self.vr_lay):
+        for lay in (self.tender_lay, self.top_lay, self.vr_lay, self.cash_lay):
             _clear(lay)
+        self.cash_panel.setVisible(False)
         _clear(self.sales_lay, keep=2)    # title + chart
         for lay in (self.tender_lay, self.top_lay, self.vr_lay, self.sales_lay):
             lay.addWidget(_row("Select a cashier to see their session", "", color=MUTED))
@@ -259,6 +263,40 @@ class SessionDashboard(QScrollArea):
             self.vr_lay.addWidget(line)
         if not vr["recent"]:
             self.vr_lay.addWidget(_row("None this session", "", color=MUTED))
+
+        self._show_cash(d.get("cash"))
+
+    def _show_cash(self, c):
+        """Float, cash sales and refunds, expected, counted, variance. Hidden when the
+        session recorded no float (tracking was off when it opened)."""
+        _clear(self.cash_lay)
+        self.cash_panel.setVisible(c is not None)
+        if c is None:
+            return
+        def m(v):                                    # -$2.50, not $-2.50
+            return f"-{format_currency(abs(v))}" if v < 0 else format_currency(v)
+        L = self.cash_lay
+        L.addWidget(_row("Opening float", m(c["float"])))
+        L.addWidget(_row("Cash sales", m(c["cash_sales"]), shaded=True))
+        L.addWidget(_row("Cash refunds", m(-c["cash_refunds"]) if c["cash_refunds"] else m(0),
+                         color=RED if c["cash_refunds"] else DARK_CARD))
+        L.addWidget(_row("Expected cash" + (" so far" if c["is_open"] else ""), m(c["expected"]),
+                         bold=True, shaded=True))
+        if c["counted"] is not None:
+            L.addWidget(_row("Counted cash", m(c["counted"]), bold=True))
+            v = c["variance"]
+            if v == 0:
+                L.addWidget(_row("Variance", "Balanced", bold=True, color=GREEN, shaded=True))
+            else:
+                L.addWidget(_row("Variance", f"{'+' if v > 0 else '-'}{format_currency(abs(v))}  "
+                                 f"({'over' if v > 0 else 'short'})", bold=True,
+                                 color=AMBER_TEXT if v > 0 else RED, shaded=True))
+            who = f"Counted by {c['counted_by']}" if c["counted_by"] else "Counted"
+            L.addWidget(_row(f"{who} · {str(c['counted_at'])[:16]}", "", color=MUTED))
+        elif c["pending"]:
+            L.addWidget(_row("Counted cash", "Count pending", bold=True, color=AMBER_TEXT))
+        else:
+            L.addWidget(_row("Counted cash", "after the session closes", color=MUTED))
 
     def show_error(self, msg: str):
         self.clear()

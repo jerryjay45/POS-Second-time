@@ -25,7 +25,7 @@ from core.db_products import (
     get_products, get_product_by_id, delete_product,
     count_products, recalculate_all_cases,
 )
-from core.db_users    import get_users, get_sessions, open_session, close_session, get_user_by_id, has_open_session
+from core.db_users    import get_users, get_sessions, open_session, close_session, get_user_by_id, has_open_session, get_session_by_id
 from core.db_checkout import (
     get_receipts, get_receipt_by_id, void_receipt, refund_receipt,
     session_totals, count_receipts,
@@ -427,9 +427,11 @@ class SupervisorWindow(BaseWindow):
         self.rpt_close_btn   = self._danger_btn("✕  Close");  self.rpt_close_btn.clicked.connect(self._rpt_close_session)
         self.rpt_open_btn    = self._success_btn("＋  Open"); self.rpt_open_btn.clicked.connect(self._rpt_open_session)
         self.rpt_print_btn   = self._outline_btn("🖨  Print"); self.rpt_print_btn.clicked.connect(self._rpt_print_session)
+        # Opening float, count and variance (only shown when cash drawer tracking applies)
+        self.rpt_cash_btn    = self._outline_btn("💵  Cash"); self.rpt_cash_btn.clicked.connect(self._rpt_cash_dialog)
         for wdg in (self.rpt_prev_btn, self.rpt_next_btn): hb.addWidget(wdg)
         hb.addWidget(self.rpt_session_header); hb.addWidget(self.rpt_back_btn); hb.addStretch()
-        for wdg in (self.rpt_history_btn, self.rpt_refresh_btn, self.rpt_close_btn,
+        for wdg in (self.rpt_history_btn, self.rpt_refresh_btn, self.rpt_cash_btn, self.rpt_close_btn,
                     self.rpt_open_btn, self.rpt_print_btn):
             hb.addWidget(wdg)
         rl.addLayout(hb)
@@ -513,9 +515,12 @@ class SupervisorWindow(BaseWindow):
         if session:
             state = "Active" if is_open else "Closed"
             color = GREEN if is_open else MUTED
+            pending = (not is_open and session.get("float_amount") is not None
+                       and session.get("counted_cash") is None)
             self.rpt_session_header.setText(
                 f"Session #{session['id']:05d}  ·  <span style='color:{color}'>{state}</span>"
-                f"  ·  opened {str(session['opened_at'])[:16]}")
+                f"  ·  opened {str(session['opened_at'])[:16]}"
+                + ("  ·  <span style='color:#8a5510'>Count pending</span>" if pending else ""))
         else:
             self.rpt_session_header.setText(
                 "No sessions yet for this cashier" if has_cashier else "Select a cashier")
@@ -523,6 +528,9 @@ class SupervisorWindow(BaseWindow):
         self.rpt_close_btn.setVisible(is_open)
         self.rpt_open_btn.setVisible(has_cashier and not is_open and not self._rpt_viewing_history)
         self.rpt_print_btn.setEnabled(session is not None)
+        # Cash: for sessions that recorded a float, or any session while tracking is on (to set one)
+        from core.cash_drawer import enabled as cash_enabled
+        self.rpt_cash_btn.setVisible(bool(session) and (session.get("float_amount") is not None or cash_enabled()))
         self.rpt_history_btn.setEnabled(has_cashier)
         self.rpt_refresh_btn.setEnabled(has_cashier)
         self.rpt_back_btn.setVisible(self._rpt_viewing_history)
@@ -568,7 +576,16 @@ class SupervisorWindow(BaseWindow):
                 "This cashier already has an open session.\n"
                 "Close it before opening a new one.")
             return
-        session_id = open_session(self._rpt_selected_cashier_id, opened_by=self.user["id"])
+        float_amount = None                      # None = the standard float (or none when tracking is off)
+        from core.cash_drawer import enabled as cash_enabled
+        if cash_enabled():
+            from ui.shared.cash_drawer_dialogs import OpenFloatDialog
+            dlg = OpenFloatDialog(self, getattr(self, "_rpt_cashier_name", ""))
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            float_amount = dlg.float_amount
+        session_id = open_session(self._rpt_selected_cashier_id, opened_by=self.user["id"],
+                                  float_amount=float_amount)
         # Broadcast so waiting cashier window can activate
         from PyQt6.QtWidgets import QApplication
         app = QApplication.instance()
@@ -594,7 +611,23 @@ class SupervisorWindow(BaseWindow):
             app = QApplication.instance()
             if hasattr(app, "session_closed"):
                 app.session_closed.emit(self._rpt_selected_session_id)
+            self._rpt_refresh()
+            # Cash drawer: the drawer is counted when the shift ends, so offer the count now.
+            # Closing the dialog leaves it pending; it can be entered later from the Cash button.
+            fresh = get_session_by_id(self._rpt_selected_session_id)
+            if fresh and fresh.get("float_amount") is not None:
+                self._rpt_cash_dialog(focus_count=True)
+            return
         self._rpt_refresh()
+
+    def _rpt_cash_dialog(self, _checked=False, focus_count=False):
+        """Float, count and variance for the session on screen."""
+        if not self._rpt_selected_session_id: return
+        from ui.shared.cash_drawer_dialogs import CashDrawerDialog
+        dlg = CashDrawerDialog(self, self._rpt_selected_session_id, self.user, focus_count=focus_count)
+        dlg.exec()
+        if dlg.changed:
+            self._rpt_refresh()
 
     def _rpt_print_session(self):
         if not self._rpt_selected_session_id: return

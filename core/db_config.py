@@ -131,6 +131,10 @@ _DEFAULTS = {
     "low_stock_threshold":   "5",          # qty at or below which warning shows
     "session_gate":          "0",          # require supervisor to open session manually
     "stock_tracking":        "0",          # track and decrement stock on sales
+
+    # Cash drawer (Setup -> Cash Drawer). Off = nothing cash-related is recorded or shown.
+    "cash_drawer_enabled":   "0",          # track opening float, counted cash and variance per session
+    "cash_drawer_float":     "0",          # standard float every new session starts with
 }
 
 

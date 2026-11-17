@@ -88,6 +88,7 @@ AREAS: tuple[Area, ...] = (
         Page("business", "🏢  Business", "_build_business_tab", None, "manager"),
         Page("tax", "💲  Tax && Currency", "_build_tax_tab", None, "manager"),
         Page("checkout", "🛒  Checkout && Appearance", "_build_checkout_tab", None, "manager"),
+        Page("cashdrawer", "💵  Cash Drawer", "_build_cash_drawer_tab", None, "manager"),
     )),
 )
 

@@ -505,6 +505,34 @@ def _product_summary_section(product_totals: dict, currency: str, w: int) -> lis
 
 # ── Session summary ───────────────────────────────────────────────────────────
 
+def _signed(v: float, currency: str) -> str:
+    return f"-{_cur(abs(v), currency)}" if v < 0 else _cur(v, currency)
+
+
+def _cash_drawer_section(c: dict, currency: str, w: int) -> list[Line]:
+    """Float + cash sales - cash refunds = expected; counted and variance once counted."""
+    lines: list[Line] = [(_center("CASH DRAWER", w), "title"), (_div(w, "-"), "div")]
+    lines.append((_right("Opening float:", _cur(c["float"], currency), w), "normal"))
+    lines.append((_right("Cash sales:", _cur(c["cash_sales"], currency), w), "normal"))
+    if c["cash_refunds"]:
+        lines.append((_right("Cash refunds:", _signed(-c["cash_refunds"], currency), w), "normal"))
+    lines.append((_div(w, "-"), "div"))
+    lines.append((_right("Expected cash:" if not c["is_open"] else "Expected so far:",
+                         _cur(c["expected"], currency), w), "total"))
+    if c["counted"] is None:
+        lines.append((_right("Counted cash:", "PENDING" if c["pending"] else "-", w), "normal"))
+    else:
+        v = c["variance"]
+        lines.append((_right("Counted cash:", _cur(c["counted"], currency), w), "normal"))
+        verdict = "BALANCED" if v == 0 else (f"{_signed(v, currency)} OVER" if v > 0
+                                              else f"{_signed(v, currency)} SHORT")
+        lines.append((_right("Variance:", verdict, w), "total"))
+        if c.get("counted_by"):
+            lines += _right_rows("Counted by:", c["counted_by"], w)
+    lines.append((_div(w), "div"))
+    return lines
+
+
 def format_session_lines(session: dict, totals: dict, cashier_name: str,
                          biz: dict, opened_by: str = "",
                          closed_by: str = "", currency: str = "$",
@@ -512,8 +540,11 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
                          group_totals: list = None,
                          voided_receipts: list = None,
                          all_receipts: list = None,
-                         width: int | None = None) -> list[Line]:
+                         width: int | None = None,
+                         cash: dict | None = None) -> list[Line]:
     """
+    cash        — core.cash_drawer.session_cash_summary(); adds a CASH DRAWER section to the
+                  full and summary reports (None = the session recorded no float).
     report_type — 'full' (line items + product totals + group totals),
                   'products' (product totals only — a focused report,
                   no per-receipt line items or group breakdown), or
@@ -586,6 +617,10 @@ def format_session_lines(session: dict, totals: dict, cashier_name: str,
     lines.append((_div(w, "-"), "div"))
     lines.append((_right("GROSS SALES:", _cur(sales, currency), w), "total"))
     lines.append((_div(w), "div"))
+
+    # ── Cash drawer (when the session recorded a float) ─────────────────
+    if cash and report_type != "products":
+        lines += _cash_drawer_section(cash, currency, w)
 
     # ── Product group totals (full report only) ─────────────────────────
     if report_type == "full" and group_totals:

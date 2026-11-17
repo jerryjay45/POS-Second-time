@@ -63,7 +63,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS session_cash_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind        TEXT    NOT NULL CHECK(kind IN ('float','count')),
+    old_value   REAL    DEFAULT NULL,          -- NULL = there was no value before
+    new_value   REAL    NOT NULL,
+    changed_by  INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+    changed_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    note        TEXT    NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user  ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_cashlog_session ON session_cash_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 """
 
@@ -98,6 +110,14 @@ def init_db():
             con.execute("ALTER TABLE sessions ADD COLUMN opened_by INTEGER DEFAULT NULL")
         if "closed_by" not in cols:
             con.execute("ALTER TABLE sessions ADD COLUMN closed_by INTEGER DEFAULT NULL")
+        # Cash drawer: float_amount NULL = this session isn't tracked (feature off when it
+        # opened); counted_cash NULL = "count pending".
+        for col, ddl in (("float_amount", "REAL DEFAULT NULL"),
+                         ("counted_cash", "REAL DEFAULT NULL"),
+                         ("counted_by",   "INTEGER DEFAULT NULL"),
+                         ("counted_at",   "TEXT DEFAULT NULL")):
+            if col not in cols:
+                con.execute(f"ALTER TABLE sessions ADD COLUMN {col} {ddl}")
         con.commit()
 
 
@@ -220,14 +240,27 @@ def delete_user(user_id: int) -> bool:
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 
-def open_session(user_id: int, opened_by: int = None) -> int:
+def open_session(user_id: int, opened_by: int = None, float_amount: float = None) -> int:
     """Open a new cashier session. Returns session id.
-    opened_by is the supervisor/manager who opened it (None = self-opened).
+    opened_by is the supervisor/manager who opened it (None = self-opened / auto-opened).
+
+    Cash drawer: when tracking is on (Setup -> Cash Drawer) the session starts with
+    `float_amount`, or with the standard float if none is given, and that amount is saved
+    on the session so changing the standard later never alters old sessions. With tracking
+    off the float stays NULL and nothing cash-related is recorded.
     """
+    if float_amount is None:
+        from core.db_config import get_bool, get_float
+        if get_bool("cash_drawer_enabled", False):
+            float_amount = max(0.0, get_float("cash_drawer_float", 0.0))
+    elif float_amount < 0:
+        raise ValueError("The float can't be negative.")
+    if float_amount is not None:
+        float_amount = round(float(float_amount), 2)
     with _conn() as con:
         cur = con.execute(
-            "INSERT INTO sessions (user_id, opened_by) VALUES (?, ?)",
-            (user_id, opened_by)
+            "INSERT INTO sessions (user_id, opened_by, float_amount) VALUES (?, ?, ?)",
+            (user_id, opened_by, float_amount)
         )
         con.commit()
         return cur.lastrowid
@@ -244,6 +277,94 @@ def close_session(session_id: int, total_sales: float,
         )
         con.commit()
         return cur.rowcount > 0
+
+
+# ── Cash drawer: float and count ──────────────────────────────────────────────
+# Fixed by role (no per-user switches): supervisors and managers may set a session's
+# float and enter its first count; only a manager may correct a saved count. Every change
+# is written to session_cash_log with who made it, so a correction is always visible.
+
+_CASH_MAX = 10_000_000.0
+
+
+def _clean_amount(value) -> float:
+    try:
+        v = round(float(value), 2)
+    except (TypeError, ValueError):
+        raise ValueError("Enter an amount.")
+    if v != v or v < 0 or v > _CASH_MAX:        # NaN, negative or absurd
+        raise ValueError("Enter an amount of 0 or more.")
+    return v
+
+
+def _role_of(con, user_id) -> str | None:
+    row = con.execute("SELECT role FROM users WHERE id = ? AND is_active = 1", (user_id,)).fetchone()
+    return row["role"] if row else None
+
+
+def set_session_float(session_id: int, amount: float, changed_by: int, note: str = "") -> float:
+    """Set or change a session's opening float. Supervisor or manager only.
+    Allowed while the session is open, and after it closes until its count is entered."""
+    amount = _clean_amount(amount)
+    with _conn() as con:
+        if _role_of(con, changed_by) not in ("supervisor", "manager"):
+            raise PermissionError("Only a supervisor or manager can change the float.")
+        s = con.execute("SELECT status, float_amount, counted_cash FROM sessions WHERE id = ?",
+                        (session_id,)).fetchone()
+        if not s:
+            raise ValueError("That session no longer exists.")
+        if s["status"] != "open" and s["counted_cash"] is not None:
+            raise ValueError("The cash has already been counted for this session, so its float is "
+                             "locked. A manager can correct the count instead.")
+        if s["float_amount"] is not None and round(s["float_amount"], 2) == amount:
+            return amount                           # nothing changed: no log entry
+        con.execute("UPDATE sessions SET float_amount = ? WHERE id = ?", (amount, session_id))
+        con.execute("INSERT INTO session_cash_log (session_id, kind, old_value, new_value, changed_by, note) "
+                    "VALUES (?, 'float', ?, ?, ?, ?)",
+                    (session_id, s["float_amount"], amount, changed_by, (note or "").strip()[:120]))
+        con.commit()
+        return amount
+
+
+def set_session_count(session_id: int, counted: float, changed_by: int, note: str = "") -> float:
+    """Enter the counted cash for a CLOSED session. Supervisor or manager enters the first
+    count; correcting a saved count is manager-only. The old value is kept in the log."""
+    counted = _clean_amount(counted)
+    with _conn() as con:
+        role = _role_of(con, changed_by)
+        if role not in ("supervisor", "manager"):
+            raise PermissionError("Only a supervisor or manager can enter the cash count.")
+        s = con.execute("SELECT status, float_amount, counted_cash FROM sessions WHERE id = ?",
+                        (session_id,)).fetchone()
+        if not s:
+            raise ValueError("That session no longer exists.")
+        if s["status"] != "closed":
+            raise ValueError("Close the session before entering the cash count.")
+        if s["float_amount"] is None:
+            raise ValueError("This session has no float recorded, so there is no expected cash to compare with.")
+        if s["counted_cash"] is not None and role != "manager":
+            raise PermissionError("Only a manager can correct a saved count.")
+        if s["counted_cash"] is not None and round(s["counted_cash"], 2) == counted:
+            return counted
+        con.execute("UPDATE sessions SET counted_cash = ?, counted_by = ?, "
+                    "counted_at = datetime('now', 'localtime') WHERE id = ?",
+                    (counted, changed_by, session_id))
+        con.execute("INSERT INTO session_cash_log (session_id, kind, old_value, new_value, changed_by, note) "
+                    "VALUES (?, 'count', ?, ?, ?, ?)",
+                    (session_id, s["counted_cash"], counted, changed_by, (note or "").strip()[:120]))
+        con.commit()
+        return counted
+
+
+def get_cash_log(session_id: int, limit: int = 20) -> list[dict]:
+    """Float and count changes for a session, newest first, with the name of who made them."""
+    with _conn() as con:
+        rows = con.execute(
+            """SELECT l.kind, l.old_value, l.new_value, l.changed_at, l.note,
+                      u.full_name AS changed_by_name
+               FROM session_cash_log l LEFT JOIN users u ON u.id = l.changed_by
+               WHERE l.session_id = ? ORDER BY l.id DESC LIMIT ?""", (session_id, limit)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_session_by_id(session_id: int) -> dict | None:
