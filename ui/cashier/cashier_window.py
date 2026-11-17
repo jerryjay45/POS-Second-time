@@ -1214,7 +1214,8 @@ class CashierWindow(BaseWindow):
         if hasattr(app, "session_closed"):
             app.session_closed.emit(sid)   # lets open supervisor/manager screens refresh
         fresh = get_session_by_id(sid)
-        if fresh and fresh.get("float_amount") is not None:
+        from core.cash_drawer import count_enabled
+        if fresh and fresh.get("float_amount") is not None and count_enabled():
             # Same as closing from Reports: count now, or leave it pending for later.
             from ui.shared.cash_drawer_dialogs import CashDrawerDialog
             CashDrawerDialog(self, sid, supervisor, focus_count=True).exec()

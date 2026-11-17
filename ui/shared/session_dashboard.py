@@ -299,7 +299,7 @@ class SessionDashboard(QScrollArea):
             L.addWidget(_row(f"{who} · {str(c['counted_at'])[:16]}", "", color=MUTED))
         elif c["pending"]:
             L.addWidget(_row("Counted cash", "Count pending", bold=True, color=AMBER_TEXT))
-        else:
+        elif c.get("count_on", True):
             L.addWidget(_row("Counted cash", "after the session closes", color=MUTED))
         if c.get("no_sale_opens"):
             L.addWidget(_row("No-sale drawer opens", str(c["no_sale_opens"]), color=MUTED))

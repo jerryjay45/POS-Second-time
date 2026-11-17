@@ -319,6 +319,11 @@ class CashDrawerDialog(QDialog):
         else:
             note = "Count the drawer and enter the total now, or come back later: it stays pending."
         self.count_note.setText(note)
+        # Counting switched off (Setup -> Cash Drawer) and this session was never counted:
+        # no count box at all. A count that already exists stays visible, and a manager can still fix it.
+        show_count = not (summary is not None and not summary["count_on"] and counted is None)
+        for w in (self.count_head, self.count_spin, self.count_btn, self.count_note):
+            w.setVisible(show_count)
 
         # paid-outs: record while open, or after closing until counted (like the float)
         can_po = (self._role in ("supervisor", "manager") and summary is not None
