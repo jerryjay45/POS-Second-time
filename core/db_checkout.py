@@ -598,3 +598,143 @@ def session_group_totals(session_id: int) -> list[dict]:
             return [dict(r) for r in rows]
         finally:
             con.execute("DETACH DATABASE pdb")
+
+
+# ── Session dashboard queries (Reports tab) ─────────────────────────────────
+# Read-only helpers; none of the functions above are changed.
+
+def session_tender_summary(session_id: int) -> dict:
+    """Cash / card split for the completed receipts in a session.
+
+    Split payments contribute card_amount to card and the remainder to cash.
+    `refunds` counts only money returned on receipts that are still
+    'completed' (partial refunds / exchanges): a fully refunded receipt is
+    already excluded from the gross figures, so subtracting it again would
+    double-count.
+    """
+    with _conn() as con:
+        r = con.execute(
+            """SELECT
+                 COALESCE(SUM(total), 0) AS collected,
+                 COALESCE(SUM(CASE payment_method
+                     WHEN 'cash'  THEN total
+                     WHEN 'split' THEN total - COALESCE(card_amount, 0)
+                     ELSE 0 END), 0) AS cash,
+                 COALESCE(SUM(CASE payment_method
+                     WHEN 'card'  THEN total
+                     WHEN 'split' THEN COALESCE(card_amount, 0)
+                     ELSE 0 END), 0) AS card
+               FROM receipts WHERE session_id = ? AND status = 'completed'""",
+            (session_id,)
+        ).fetchone()
+        refunds = con.execute(
+            """SELECT COALESCE(SUM(rf.amount), 0) AS amt
+               FROM refunds rf JOIN receipts r ON r.id = rf.receipt_id
+               WHERE r.session_id = ? AND r.status = 'completed'
+                 AND rf.refund_type != 'void'""",
+            (session_id,)
+        ).fetchone()["amt"]
+    out = dict(r)
+    out["refunds"] = refunds
+    out["net"] = out["collected"] - refunds
+    return out
+
+
+def session_hourly_sales(session_id: int) -> list[dict]:
+    """Completed sales per hour of day (0-23) for a session."""
+    with _conn() as con:
+        rows = con.execute(
+            """SELECT CAST(strftime('%H', created_at) AS INTEGER) AS hour,
+                      COALESCE(SUM(total), 0) AS sales, COUNT(*) AS txns
+               FROM receipts WHERE session_id = ? AND status = 'completed'
+               GROUP BY hour ORDER BY hour""",
+            (session_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def session_top_items(session_id: int, limit: int = 5) -> list[dict]:
+    """Best sellers for a session by quantity (amount shown alongside)."""
+    with _conn() as con:
+        rows = con.execute(
+            """SELECT ri.product_name AS name,
+                      SUM(ri.quantity)   AS qty,
+                      SUM(ri.line_total) AS amount
+               FROM receipt_items ri JOIN receipts r ON r.id = ri.receipt_id
+               WHERE r.session_id = ? AND r.status = 'completed'
+               GROUP BY ri.product_name
+               ORDER BY qty DESC, amount DESC LIMIT ?""",
+            (session_id, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def session_voids_refunds(session_id: int, limit: int = 6) -> dict:
+    """Voids and refunds in a session: counts, amounts and the latest few."""
+    with _conn() as con:
+        rows = con.execute(
+            """SELECT r.receipt_number, rf.refund_type, rf.amount, rf.reason,
+                      rf.created_at,
+                      CASE WHEN rf.refund_type = 'void' THEN r.total
+                           ELSE rf.amount END AS value
+               FROM refunds rf JOIN receipts r ON r.id = rf.receipt_id
+               WHERE r.session_id = ?
+               ORDER BY rf.created_at DESC""",
+            (session_id,)
+        ).fetchall()
+    rows = [dict(r) for r in rows]
+    voids   = [r for r in rows if r["refund_type"] == "void"]
+    refunds = [r for r in rows if r["refund_type"] != "void"]
+    return {
+        "void_count":   len(voids),
+        "void_amount":  sum(r["value"] for r in voids),
+        "refund_count": len(refunds),
+        "refund_amount": sum(r["value"] for r in refunds),
+        "recent": rows[:limit],
+    }
+
+
+def session_cash_refunds(session_id: int) -> float:
+    """Cash handed back to customers for partial refunds on this session's receipts.
+
+    Only receipts that are still 'completed' count: a fully refunded or voided receipt is
+    already left out of the session's cash sales, so subtracting it again would count it
+    twice. A cash sale's refund is all cash; a split sale's refund is split in the same
+    proportion as the sale was paid; card sales never touch the drawer. Exchanges move no
+    recorded cash and are not counted. Like every session report here, a refund belongs to
+    the session the ORIGINAL sale was rung in.
+    """
+    with _conn() as con:
+        v = con.execute(
+            """SELECT COALESCE(SUM(CASE r.payment_method
+                        WHEN 'cash'  THEN rf.amount
+                        WHEN 'split' THEN CASE WHEN r.total > 0
+                                               THEN rf.amount * (r.total - COALESCE(r.card_amount, 0)) / r.total
+                                               ELSE 0 END
+                        ELSE 0 END), 0) AS cash_out
+               FROM refunds rf JOIN receipts r ON r.id = rf.receipt_id
+               WHERE r.session_id = ? AND r.status = 'completed'
+                 AND rf.refund_type IN ('partial', 'full')""",
+            (session_id,)
+        ).fetchone()["cash_out"]
+    return round(v or 0.0, 2)
+
+
+def _cash_summary_for(session_id: int):
+    from core.db_users import get_session_by_id
+    from core.cash_drawer import session_cash_summary      # imported late: it imports this module
+    session = get_session_by_id(session_id)
+    return session_cash_summary(session) if session else None
+
+
+def session_dashboard_data(session_id: int) -> dict:
+    """Everything the Reports dashboard shows for one session."""
+    return {
+        "totals": session_totals(session_id),
+        "tender": session_tender_summary(session_id),
+        "groups": session_group_totals(session_id),
+        "hourly": session_hourly_sales(session_id),
+        "top":    session_top_items(session_id),
+        "vr":     session_voids_refunds(session_id),
+        "cash":   _cash_summary_for(session_id),      # None unless the session tracks a float
+    }

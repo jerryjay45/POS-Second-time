@@ -490,10 +490,12 @@ def print_session(session: dict, report_type: str = "full",
             session_voided_receipts, get_session_receipts,
             get_receipt_by_id,
         )
-        from core.db_users import get_user_by_id
+        from core.db_users import get_user_by_id, get_session_by_id
+        from core.cash_drawer import session_cash_summary
 
         biz, currency = _get_biz_and_currency()
         totals    = session_totals(session["id"])
+        cash      = session_cash_summary(get_session_by_id(session["id"]))   # fresh: a count may be new
         grp_totals = session_group_totals(session["id"])
         voided    = session_voided_receipts(session["id"])
 
@@ -519,7 +521,7 @@ def print_session(session: dict, report_type: str = "full",
             opened_by=opened_by, closed_by=closed_by,
             currency=currency, report_type=report_type,
             group_totals=grp_totals, voided_receipts=voided,
-            all_receipts=all_receipts,
+            all_receipts=all_receipts, cash=cash,
         ))
         text = "\n".join(t for t, _k in lines)
         cashier_folder = _cashier_folder_by_user_id(session.get("user_id"))
@@ -609,13 +611,15 @@ def print_test_receipt(parent=None, kind: str = "sale") -> bool:
         return False
 
 
-def open_drawer_manual(authorized_by: dict, parent=None) -> bool:
+def open_drawer_manual(authorized_by: dict, parent=None, user_id: int | None = None,
+                       session_id: int | None = None) -> bool:
     """
     Open the cash drawer with no sale attached — used by the "Open
     Drawer" button on the cashier/supervisor/manager dashboards. The
     caller is responsible for authorising this first (see
     ui.shared.drawer_auth_dialog.DrawerAuthDialog); this function only
-    fires the pulse and records who authorised it.
+    fires the pulse and records who authorised it (text log and, for the Cash Drawer
+    report, the drawer_opens table; user_id / session_id say whose till it was, when known).
 
     Appends one line to receipts/_drawer_log.txt — a lightweight,
     append-only record (who, when) for accountability, since a no-sale
@@ -627,6 +631,8 @@ def open_drawer_manual(authorized_by: dict, parent=None) -> bool:
         with ThermalPrinter.from_config() as p:
             p.kick_drawer()
         _log_drawer_open(authorized_by)
+        from core.db_users import log_drawer_open
+        log_drawer_open((authorized_by or {}).get("id"), user_id, session_id)
         return True
     except PrinterError as e:
         print(f"[PrintManager] Manual drawer open failed: {e}")

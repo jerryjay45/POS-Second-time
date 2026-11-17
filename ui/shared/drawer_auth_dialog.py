@@ -36,10 +36,14 @@ class DrawerAuthDialog(QDialog):
     the authorising user's dict (id, full_name, role, ...).
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, title: str = "Open Cash Drawer",
+                 message: str = "This opens the drawer without a sale. A supervisor or "
+                                "manager must authorise.",
+                 button_text: str = "🔓  Open Drawer"):
         super().__init__(parent)
         self.authorized_user = None
-        self.setWindowTitle("Open Cash Drawer")
+        self._title, self._message, self._button_text = title, message, button_text
+        self.setWindowTitle(title)
         self.setModal(True)
         self.setFixedWidth(400)
         self.setStyleSheet(f"background:{WHITE};")
@@ -53,7 +57,7 @@ class DrawerAuthDialog(QDialog):
         hdr = QFrame(); hdr.setFixedHeight(52)
         hdr.setStyleSheet(f"background:{DARK};")
         hl = QHBoxLayout(hdr); hl.setContentsMargins(18, 0, 18, 0)
-        t = QLabel("🔓  Open Cash Drawer")
+        t = QLabel(("🔓  " if self._title == "Open Cash Drawer" else "🛡  ") + self._title)
         t.setStyleSheet(f"color:{AMBER};font-size:14px;font-weight:700;")
         x = QPushButton("✕"); x.setFixedSize(28, 28)
         x.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -65,10 +69,7 @@ class DrawerAuthDialog(QDialog):
         body = QFrame(); body.setStyleSheet(f"background:{WHITE};")
         bl = QVBoxLayout(body); bl.setContentsMargins(18, 16, 18, 16); bl.setSpacing(10)
 
-        msg = QLabel(
-            "This opens the drawer without a sale. A supervisor or "
-            "manager must authorise."
-        )
+        msg = QLabel(self._message)
         msg.setWordWrap(True)
         msg.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;")
         bl.addWidget(msg)
@@ -112,7 +113,7 @@ class DrawerAuthDialog(QDialog):
         cancel.clicked.connect(self.reject)
         cancel.setAutoDefault(False); cancel.setDefault(False)
 
-        self.confirm_btn = QPushButton("🔓  Open Drawer")
+        self.confirm_btn = QPushButton(self._button_text)
         self.confirm_btn.setFixedHeight(38)
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.confirm_btn.setStyleSheet(f"""

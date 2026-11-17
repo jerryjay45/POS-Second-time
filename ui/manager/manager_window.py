@@ -2,7 +2,7 @@
 ui/manager/manager_window.py
 Manager dashboard — inherits SupervisorWindow and prepends manager-only tabs:
   • Users     — add / edit / delete users, role assignment
-  • Business  — business info, GCT %, discount levels, product groups, printer settings
+  • Setup / Inventory / Data settings pages — one page per topic (see ui/shared/tab_registry.py)
   • Quick Keys — (inherited from supervisor, shown here too)
   • All supervisor tabs (Products, Reports, Transactions, Void/Refund)
 """
@@ -31,6 +31,7 @@ from core.db_config   import (
     get_business, update_business, get, set as cfg_set, set_many,
     clean_lines, BUSINESS_TEXT_MAX,
     gct_rate, get_pg_config, save_pg_config, get_quick_keys, save_quick_keys,
+    get_bool, get_float,
 )
 from core.db_products import get_products, get_product_by_id, get_groups, add_group, delete_group, update_group_margin, recalculate_all_cases
 from ui.shared.checkbox import make_checkbox
@@ -121,67 +122,10 @@ class ManagerWindow(SupervisorWindow):
             open_drawer_manual(dlg.authorized_user, parent=self)
 
     def _build_manager_tabs(self):
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane{{background:{WARM_WHITE};border:none;}}
-            QTabBar::tab{{background:{WHITE};color:{LABEL_TEXT};border:none;
-            border-bottom:2px solid transparent;padding:10px 16px;
-            font-size:12px;font-weight:500;margin-right:2px;}}
-            QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
-            QTabBar::tab:hover{{color:{DARK_CARD};}}
-        """)
-        # Manager-only tabs first
-        # Tabs are built the first time they are opened and refreshed when the
-        # user returns to them (see ui/shared/lazy_tabs.py). The Business tab
-        # (settings forms) and Import tab have no refresher: they hold the
-        # user's unsaved edits.
-        from ui.shared.lazy_tabs import LazyTabs
-        self._lazy = LazyTabs(self.tabs)
-        self._lazy.add("users", "👥  Users", self._build_users_tab,
-                       self._usr_refresh_on_show)
-        self._lazy.add("business", "🏢  Business", self._build_business_tab)
-        # Receipt designer: printer profiles, paper/feed, receipt look, live preview,
-        # calibration, export/import. Reloads on return unless it has unsaved edits.
-        self._lazy.add("receipt", "🖨  Receipt", self._build_receipt_tab,
-                       lambda: self._lazy.page("receipt").reload_if_clean())
-        # Backups: destinations, schedule, retention, history, restore
-        self._lazy.add("backup", "💾  Backup", self._build_backup_tab,
-                       lambda: self._lazy.page("backup").refresh())
-        # Second printer at the serving station (pickup ticket). Holds unsaved edits: no refresher.
-        self._lazy.add("pickup", "🍽  Pickup", self._build_pickup_tab)
-        # Then all supervisor tabs
-        self._lazy.add("products", "📦  Products", self._build_products_tab,
-                       lambda: self._load_products(self._pg_search))
-        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
-                       self._rpt_refresh_on_show)
-        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
-                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
-        # void_refund_tab.py was retired — reuse the same inline void/refund
-        # tab-builder inherited from SupervisorWindow (already reworked to
-        # use per-item quantity refunds against the fixed reconciliation logic).
-        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
-                       self._vr_refresh_on_show)
-        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
-                       lambda: self._lazy.page("stock")._refresh_all())
-        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
-                       lambda: self._lazy.page("pricetags")._load_table())
-        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
-        self._lazy.add("import", "📥  Import", self._build_dbf_import_tab)
-        self._lazy.start(0)
-        return self.tabs
-
-    def _build_backup_tab(self):
-        from ui.manager.backup_tab import BackupTab
-        return BackupTab(self.user)
-
-    def _on_logout_confirmed(self):
-        """Manager logout: start a background backup if switched on."""
-        try:
-            from core import backup as bk
-            if bk.load_settings()["on_manager_logout"]:
-                bk.run_async("logout")
-        except Exception:
-            pass                       # a backup problem must never block logging out
+        # Same areas as the supervisor, plus the manager-only pages
+        # (see ui/shared/tab_registry.py).
+        from ui.shared.tab_registry import build_role_tabs
+        return build_role_tabs(self, "manager")
 
     def _build_receipt_tab(self):
         from ui.manager.receipt_tab import ReceiptDesignerTab
@@ -304,35 +248,64 @@ class ManagerWindow(SupervisorWindow):
     # BUSINESS TAB
     # ================================================================
 
-    def _build_business_tab(self):
-        w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
-        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
-        sub = QTabWidget()
-        sub.setStyleSheet(f"""
-            QTabWidget::pane{{background:{WARM_WHITE};border:none;border-top:1px solid {BORDER};}}
-            QTabBar::tab{{background:{WARM_WHITE};color:{LABEL_TEXT};border:none;
-            border-bottom:2px solid transparent;padding:8px 16px;
-            font-size:11px;font-weight:500;}}
-            QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
-            QTabBar::tab:hover{{color:{DARK_CARD};}}
-        """)
-        sub.addTab(self._build_biz_info_panel(),      "🏢  Business Info")
-        sub.addTab(self._build_groups_panel(),        "📂  Groups & Discounts")
-        sub.addTab(self._build_pg_panel(),            "🗄  PostgreSQL")
-        lay.addWidget(sub)
-        self._biz_clean = self._biz_state()   # baseline for the unsaved-changes check
-        self._pg_clean  = self._pg_state()
-        return w
+    # ================================================================
+    # SETTINGS PAGES  (Setup / Inventory / Data areas)
+    # Each page has its own Save button and its own unsaved-changes check.
+    # ================================================================
 
-    def _build_biz_info_panel(self):
+    def _settings_page(self, title):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"QScrollArea{{background:{WHITE};border:none;}}")
         fw = QWidget(); fw.setStyleSheet(f"background:{WHITE};")
         lay = QVBoxLayout(fw); lay.setContentsMargins(20,20,20,20); lay.setSpacing(14)
-
-        lay.addWidget(self._section_lbl("Business Information"))
+        lay.addWidget(self._section_lbl(title))
         lay.addWidget(self._hdiv())
+        return scroll, fw, lay
 
+    def _settings_footer(self, scroll, fw, lay, feedback_attr, save_text, slot):
+        lay.addStretch()
+        fb = QLabel("")
+        fb.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
+        fb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        setattr(self, feedback_attr, fb)
+        lay.addWidget(fb)
+        btn = QPushButton(save_text); btn.setFixedHeight(38)
+        btn.setStyleSheet(self._accent_btn()); btn.clicked.connect(slot)
+        lay.addWidget(btn)
+        scroll.setWidget(fw)
+        return scroll
+
+    def _flash(self, feedback_attr, text, ok=True):
+        lbl = getattr(self, feedback_attr)
+        lbl.setStyleSheet(f"color:{GREEN if ok else RED};font-size:11px;font-weight:600;")
+        lbl.setText(text)
+
+    def _hinted(self, widget, text):
+        box = QVBoxLayout(); box.setSpacing(3)
+        box.addWidget(widget); box.addWidget(self._fhint(text))
+        return box
+
+    def _spin_style(self, kind="QDoubleSpinBox"):
+        return (f"{kind}{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};"
+                f"border-radius:7px;padding:0 10px;font-size:13px;font-weight:600;}}"
+                f"{kind}:focus{{border-color:{AMBER};}}")
+
+    def _toggle_block(self, label, hint):
+        cb = make_checkbox(label, size=17, font_size=12)
+        hl = QLabel(hint); hl.setWordWrap(True)
+        hl.setStyleSheet(f"color:{MUTED};font-size:11px;margin-left:25px;")
+        g = QVBoxLayout(); g.setSpacing(3); g.addWidget(cb); g.addWidget(hl)
+        return cb, g
+
+    def _toggle_frame(self):
+        box = QFrame()
+        box.setStyleSheet(f"background:{WARM_WHITE};border:1px solid {BORDER};border-radius:8px;")
+        v = QVBoxLayout(box); v.setContentsMargins(14,12,14,12); v.setSpacing(10)
+        return box, v
+
+    # ── Setup → Business ────────────────────────────────────────────
+    def _build_business_tab(self):
+        scroll, fw, lay = self._settings_page("Business Information")
         form = QFormLayout(); form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -352,120 +325,159 @@ class ManagerWindow(SupervisorWindow):
         self.biz_tax_id  = self._finp("Tax ID / TRN");    form.addRow(self._flabel("Tax ID"),        self.biz_tax_id)
         self.biz_footer  = self._finp("e.g. Thank you!"); form.addRow(self._flabel("Receipt Footer"),self.biz_footer)
         lay.addLayout(form)
+        page = self._settings_footer(scroll, fw, lay, "biz_feedback", "💾  Save Business Info", self._biz_save)
+        self._biz_load(); self._biz_clean = self._biz_state()
+        return page
 
-        lay.addWidget(self._hdiv())
-        lay.addWidget(self._section_lbl("GCT / Tax Rate"))
-        gct_row = QHBoxLayout(); gct_row.setSpacing(10)
+    # ── Setup → Tax & Currency ──────────────────────────────────────
+    def _build_tax_tab(self):
+        scroll, fw, lay = self._settings_page("Tax & Currency")
+        form = QFormLayout(); form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.biz_gct = QDoubleSpinBox(); self.biz_gct.setRange(0,100); self.biz_gct.setDecimals(2)
         self.biz_gct.setSuffix("  %"); self.biz_gct.setFixedHeight(36); self.biz_gct.setFixedWidth(140)
-        self.biz_gct.setStyleSheet(f"QDoubleSpinBox{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};border-radius:7px;padding:0 10px;font-size:13px;font-weight:600;}}QDoubleSpinBox:focus{{border-color:{AMBER};}}")
-        self.biz_gct.setValue(gct_rate()*100)
-        gct_hint = QLabel("Applied to all GCT-applicable products at checkout")
-        gct_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
-        gct_row.addWidget(self._flabel("Rate:")); gct_row.addWidget(self.biz_gct); gct_row.addWidget(gct_hint); gct_row.addStretch()
-        lay.addLayout(gct_row)
+        self.biz_gct.setStyleSheet(self._spin_style())
+        form.addRow(self._flabel("GCT / Tax Rate"),
+                    self._hinted(self.biz_gct, "Applied to all GCT-applicable products at checkout."))
+        self.tax_currency = self._finp("e.g. $  or  J$", uppercase=False)
+        self.tax_currency.setMaxLength(5); self.tax_currency.setFixedWidth(140)
+        form.addRow(self._flabel("Currency symbol"),
+                    self._hinted(self.tax_currency, "Shown on the cashier screen, receipts and price tags."))
+        self.tax_terminal = self._finp("e.g. T01  or  MAIN")
+        self.tax_terminal.setMaxLength(10); self.tax_terminal.setFixedWidth(200)
+        form.addRow(self._flabel("Terminal ID"),
+                    self._hinted(self.tax_terminal,
+                                 "Letters and numbers only, up to 10 characters. It prefixes every receipt "
+                                 "number (T01-0001). Give each terminal its own ID."))
+        lay.addLayout(form)
+        page = self._settings_footer(scroll, fw, lay, "tax_feedback", "💾  Save Tax && Currency", self._tax_save)
+        self._tax_load(); self._tax_clean = self._tax_state()
+        return page
 
-        # Appearance & checkout
-        lay.addWidget(self._hdiv())
-        lay.addWidget(self._section_lbl("Appearance & Checkout"))
-        ac_form = QFormLayout(); ac_form.setSpacing(10)
-        ac_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+    # ── Setup → Checkout & Appearance ───────────────────────────────
+    def _build_checkout_tab(self):
+        scroll, fw, lay = self._settings_page("Checkout & Appearance")
+        form = QFormLayout(); form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.biz_theme = QComboBox(); self.biz_theme.setFixedHeight(36); self.biz_theme.setFixedWidth(200)
         for key, label in (("amber", "Amber (default)"), ("blue", "Blue"),
                            ("green", "Green"), ("high_contrast", "High contrast")):
             self.biz_theme.addItem(label, key)
-        theme_hint = QLabel("Takes effect the next time the program starts")
-        theme_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
-        theme_row = QHBoxLayout(); theme_row.setSpacing(10)
-        theme_row.addWidget(self.biz_theme); theme_row.addWidget(theme_hint); theme_row.addStretch()
-        ac_form.addRow(self._flabel("Colour theme"), theme_row)
+        form.addRow(self._flabel("Colour theme"),
+                    self._hinted(self.biz_theme, "Takes effect the next time the program starts."))
         self.biz_quick_cash = self._finp("e.g. 5, 10, 20, 50", uppercase=False)
-        qc_hint = QLabel("Quick-cash buttons at checkout (the first 4 are shown)")
-        qc_hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
-        qc_box = QVBoxLayout(); qc_box.setSpacing(3)
-        qc_box.addWidget(self.biz_quick_cash); qc_box.addWidget(qc_hint)
-        ac_form.addRow(self._flabel("Quick-cash amounts"), qc_box)
-        lay.addLayout(ac_form)
+        form.addRow(self._flabel("Quick-cash amounts"),
+                    self._hinted(self.biz_quick_cash, "Quick-cash buttons at checkout (the first 4 are shown)."))
+        lay.addLayout(form)
+        page = self._settings_footer(scroll, fw, lay, "chk_feedback", "💾  Save Checkout && Appearance", self._chk_save)
+        self._chk_load(); self._chk_clean = self._chk_state()
+        return page
 
-        # Cashier permissions
-        lay.addWidget(self._hdiv())
-        lay.addWidget(self._section_lbl("Cashier Permissions"))
-        perm_box = QFrame()
-        perm_box.setStyleSheet(f"background:{WARM_WHITE};border:1px solid {BORDER};border-radius:8px;")
-        pb = QVBoxLayout(perm_box); pb.setContentsMargins(14,12,14,12); pb.setSpacing(10)
-        def _perm_toggle(label, hint):
-            cb = make_checkbox(label, size=17, font_size=12)
-            hl = QLabel(hint); hl.setWordWrap(True)
-            hl.setStyleSheet(f"color:{MUTED};font-size:11px;margin-left:25px;")
-            return cb, hl
+    # ── Setup → Cash Drawer ─────────────────────────────────────────
+    def _build_cash_drawer_tab(self):
+        scroll, fw, lay = self._settings_page("Cash Drawer")
+        box, pb = self._toggle_frame()
+        self.cd_enabled, g = self._toggle_block(
+            "Track the cash drawer (opening float, counted cash and variance)",
+            "When on, every new session starts with the standard float. A supervisor or manager "
+            "counts the drawer when the session closes, and the Reports tab and the Z-report show "
+            "expected cash, counted cash and the variance. When off, none of this appears anywhere.")
+        pb.addLayout(g)
+        lay.addWidget(box)
+        form = QFormLayout(); form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.cd_float = QDoubleSpinBox(); self.cd_float.setRange(0, 1_000_000); self.cd_float.setDecimals(2)
+        self.cd_float.setSingleStep(5); self.cd_float.setFixedHeight(36); self.cd_float.setFixedWidth(160)
+        self.cd_float.setStyleSheet(self._spin_style())
+        form.addRow(self._flabel("Standard float"),
+                    self._hinted(self.cd_float,
+                                 "The cash every session starts with. Sessions that open automatically at "
+                                 "login use it. Each session keeps the amount it opened with, so changing "
+                                 "this never alters old sessions."))
+        lay.addLayout(form)
+        lay.addWidget(self._fhint(
+            "For one shift that needs a different amount, a supervisor or manager can change that "
+            "session's float from the Cash button on the Reports tab, or enter it when opening the "
+            "session by hand. Only a manager can correct a count once it is saved."))
+        self.cd_enabled.toggled.connect(self.cd_float.setEnabled)
+        page = self._settings_footer(scroll, fw, lay, "cd_feedback", "💾  Save Cash Drawer", self._cd_save)
+        self._cd_load(); self._cd_clean = self._cd_state()
+        return page
 
-        self.perm_require_remove_auth, ra_hint = _perm_toggle(
+    def _cd_load(self):
+        self.cd_enabled.setChecked(get_bool("cash_drawer_enabled", False))
+        self.cd_float.setValue(get_float("cash_drawer_float", 0.0))
+        self.cd_float.setEnabled(self.cd_enabled.isChecked())
+
+    def _cd_state(self):
+        return (self.cd_enabled.isChecked(), round(self.cd_float.value(), 2))
+
+    def _cd_save(self):
+        try:
+            set_many({"cash_drawer_enabled": "1" if self.cd_enabled.isChecked() else "0",
+                      "cash_drawer_float": f"{self.cd_float.value():.2f}"})
+            self._cd_clean = self._cd_state()
+            self._flash("cd_feedback", "✓  Cash drawer settings saved. New sessions use them.")
+        except Exception as e:
+            self._flash("cd_feedback", str(e), ok=False)
+
+    # ── Setup → Permissions ─────────────────────────────────────────
+    def _build_permissions_tab(self):
+        scroll, fw, lay = self._settings_page("Cashier Permissions")
+        box, pb = self._toggle_frame()
+        self.perm_require_remove_auth, g = self._toggle_block(
             "Require supervisor authorisation to remove items from cart",
-            "When enabled, cashiers must have a supervisor enter their password to remove any cart item."
-        )
-        self.perm_session_gate, sg_hint = _perm_toggle(
+            "When enabled, cashiers must have a supervisor enter their password to remove any cart item.")
+        pb.addLayout(g)
+        self.perm_session_gate, g = self._toggle_block(
             "Require cashiers to open a session before selling",
-            "When enabled, cashiers see a session gate on login and cannot ring sales until a session is opened."
-        )
-        self.perm_cart_qty_edit, cq_hint = _perm_toggle(
+            "When enabled, cashiers see a session gate on login and cannot ring sales until a session is opened.")
+        pb.addLayout(g)
+        self.perm_cart_qty_edit, g = self._toggle_block(
             "Allow cashiers to edit item quantity directly in the cart",
-            "When enabled, cashiers can double-click the Qty cell in the cart to change the quantity."
-        )
+            "When enabled, cashiers can double-click the Qty cell in the cart to change the quantity.")
+        pb.addLayout(g)
+        lay.addWidget(box)
+        page = self._settings_footer(scroll, fw, lay, "perm_feedback", "💾  Save Permissions", self._perm_save)
+        self._perm_load(); self._perm_clean = self._perm_state()
+        return page
 
-        # Low stock warning toggle + threshold spinbox
-        self.perm_low_stock, ls_hint = _perm_toggle(
-            "Show low stock warning when adding items to cart",
-            "When enabled, cashiers see a warning if a product's stock is at or below the threshold."
-        )
-        self.perm_stock_tracking, st_hint = _perm_toggle(
+    # ── Inventory → Stock Settings ──────────────────────────────────
+    def _build_stock_settings_tab(self):
+        scroll, fw, lay = self._settings_page("Stock Settings")
+        box, pb = self._toggle_frame()
+        self.perm_stock_tracking, g = self._toggle_block(
             "Enable stock tracking",
-            "When enabled, stock is decremented on every sale and incremented on voids/refunds."
-        )
-        ls_row = QHBoxLayout()
-        ls_row.setContentsMargins(22, 0, 0, 0)
-        ls_row.setSpacing(8)
-        ls_threshold_lbl = QLabel("Threshold:")
-        ls_threshold_lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;")
+            "When enabled, stock is decremented on every sale and incremented on voids/refunds.")
+        pb.addLayout(g)
+        self.perm_low_stock, g = self._toggle_block(
+            "Show low stock warning when adding items to cart",
+            "When enabled, cashiers see a warning if a product's stock is at or below the threshold.")
+        pb.addLayout(g)
+        ls_row = QHBoxLayout(); ls_row.setContentsMargins(22, 0, 0, 0); ls_row.setSpacing(8)
+        lbl = QLabel("Threshold:"); lbl.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;")
         self.perm_low_stock_threshold = QSpinBox()
-        self.perm_low_stock_threshold.setMinimum(1)
-        self.perm_low_stock_threshold.setMaximum(999)
-        self.perm_low_stock_threshold.setValue(5)
-        self.perm_low_stock_threshold.setFixedWidth(70)
-        self.perm_low_stock_threshold.setFixedHeight(28)
+        self.perm_low_stock_threshold.setRange(1, 999); self.perm_low_stock_threshold.setValue(5)
+        self.perm_low_stock_threshold.setFixedSize(70, 28)
         self.perm_low_stock_threshold.setStyleSheet(self._input_style())
         self.perm_low_stock_threshold.setEnabled(False)
-        ls_units_lbl = QLabel("units or fewer")
-        ls_units_lbl.setStyleSheet(f"color:{MUTED};font-size:11px;")
-        ls_row.addWidget(ls_threshold_lbl)
-        ls_row.addWidget(self.perm_low_stock_threshold)
-        ls_row.addWidget(ls_units_lbl)
-        ls_row.addStretch()
-        # Enable/disable threshold spinbox with the checkbox
-        self.perm_low_stock.toggled.connect(self.perm_low_stock_threshold.setEnabled)
-
-        def _perm_group(cb, hint_lbl):
-            g = QVBoxLayout(); g.setSpacing(3)
-            g.addWidget(cb); g.addWidget(hint_lbl)
-            return g
-
-        pb.addLayout(_perm_group(self.perm_require_remove_auth, ra_hint))
-        pb.addLayout(_perm_group(self.perm_session_gate, sg_hint))
-        pb.addLayout(_perm_group(self.perm_cart_qty_edit, cq_hint))
-        pb.addLayout(_perm_group(self.perm_low_stock, ls_hint))
+        units = QLabel("units or fewer"); units.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        ls_row.addWidget(lbl); ls_row.addWidget(self.perm_low_stock_threshold); ls_row.addWidget(units); ls_row.addStretch()
         pb.addLayout(ls_row)
-        pb.addLayout(_perm_group(self.perm_stock_tracking, st_hint))
-        lay.addWidget(perm_box)
+        self.perm_low_stock.toggled.connect(self.perm_low_stock_threshold.setEnabled)
+        lay.addWidget(box)
+        page = self._settings_footer(scroll, fw, lay, "stk_feedback", "💾  Save Stock Settings", self._stk_save)
+        self._stk_load(); self._stk_clean = self._stk_state()
+        return page
 
-        lay.addStretch()
-        self.biz_feedback = QLabel("")
-        self.biz_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
-        self.biz_feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.biz_feedback)
-        save_btn = QPushButton("💾  Save Business Info"); save_btn.setFixedHeight(38)
-        save_btn.setStyleSheet(self._accent_btn()); save_btn.clicked.connect(self._biz_save)
-        lay.addWidget(save_btn)
+    # ── Data → PostgreSQL ───────────────────────────────────────────
+    def _build_postgres_tab(self):
+        page = self._build_pg_panel()
+        self._pg_clean = self._pg_state()
+        return page
 
-        scroll.setWidget(fw); self._biz_load(); return scroll
+    def _build_groups_panel_page(self):
+        return self._build_groups_panel()
 
     def _build_groups_panel(self):
         """Groups & Discount Levels sub-tab."""
@@ -566,11 +578,13 @@ class ManagerWindow(SupervisorWindow):
         self._load_discount_levels()
 
         lay.addStretch()
-        disc_save = QPushButton("💾  Save Groups & Discounts"); disc_save.setFixedHeight(38)
+        disc_save = QPushButton("💾  Save Groups && Discounts"); disc_save.setFixedHeight(38)
         disc_save.setStyleSheet(self._accent_btn())
         disc_save.clicked.connect(self._groups_disc_save)
         lay.addWidget(disc_save)
-        scroll.setWidget(fw); return scroll
+        scroll.setWidget(fw)
+        self._grp_clean = self._grp_state()
+        return scroll
 
     def _groups_disc_save(self):
         # Save profit margins for each group row
@@ -598,6 +612,7 @@ class ManagerWindow(SupervisorWindow):
 
         self._save_discount_levels()
         self._load_groups()   # refresh display with updated margins
+        self._grp_clean = self._grp_state()
 
         msg = "Groups, margins, and discount levels saved.\nSelling prices have been recalculated."
         if n_cases:
@@ -714,6 +729,7 @@ class ManagerWindow(SupervisorWindow):
             self.pg_status.setStyleSheet(f"color:{RED};font-size:11px;")
 
 
+    # ── load / state / save for each settings page ────────────────────
     def _biz_load(self):
         b = get_business()
         self.biz_name.setPlainText(b.get("name",""))
@@ -723,20 +739,30 @@ class ManagerWindow(SupervisorWindow):
         self.biz_email.setText(b.get("email",""))
         self.biz_tax_id.setText(b.get("tax_id",""))
         self.biz_footer.setText(b.get("receipt_footer",""))
-        from core.db_config import gct_rate as gr, get_bool, get_int
-        self.biz_gct.setValue(gr() * 100)
+
+    def _tax_load(self):
+        self.biz_gct.setValue(gct_rate() * 100)
+        self.tax_currency.setText(get("currency_symbol", "$"))
+        self.tax_terminal.setText(get("terminal_id", "01"))
+
+    def _chk_load(self):
+        i = self.biz_theme.findData(get("theme", "amber"))
+        self.biz_theme.setCurrentIndex(i if i >= 0 else 0)
+        self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in checkout_quick_amounts()))
+
+    def _perm_load(self):
+        from core.db_config import get_bool
         self.perm_require_remove_auth.setChecked(get_bool("require_remove_auth", False))
         self.perm_session_gate.setChecked(get_bool("session_gate", False))
         self.perm_cart_qty_edit.setChecked(get_bool("allow_cart_qty_edit", False))
-        low_stock = get_bool("low_stock_warning", False)
-        self.perm_low_stock.setChecked(low_stock)
+
+    def _stk_load(self):
+        from core.db_config import get_bool, get_int
+        low = get_bool("low_stock_warning", False)
+        self.perm_low_stock.setChecked(low)
         self.perm_low_stock_threshold.setValue(get_int("low_stock_threshold", 5))
-        self.perm_low_stock_threshold.setEnabled(low_stock)
+        self.perm_low_stock_threshold.setEnabled(low)
         self.perm_stock_tracking.setChecked(get_bool("stock_tracking", False))
-        from core.db_config import get as _cfg
-        i = self.biz_theme.findData(_cfg("theme", "amber"))
-        self.biz_theme.setCurrentIndex(i if i >= 0 else 0)
-        self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in checkout_quick_amounts()))
 
     @staticmethod
     def _parse_quick_amounts(text: str) -> list[float]:
@@ -753,31 +779,61 @@ class ManagerWindow(SupervisorWindow):
 
     # ── unsaved-change tracking (checked on logout) ───────────────────
     def _biz_state(self):
-        disc = [(r[0].value(), r[1].value()) for r in getattr(self, "_disc_rows", [])]
         return (self.biz_name.toPlainText(), self.biz_subtitle.text(),
                 self.biz_address.toPlainText(), self.biz_phone.text(),
-                self.biz_email.text(), self.biz_tax_id.text(), self.biz_footer.text(),
-                self.biz_gct.value(), self.biz_theme.currentData(),
-                self.biz_quick_cash.text().strip(),
-                self.perm_require_remove_auth.isChecked(), self.perm_session_gate.isChecked(),
-                self.perm_cart_qty_edit.isChecked(), self.perm_low_stock.isChecked(),
-                self.perm_low_stock_threshold.value(), self.perm_stock_tracking.isChecked(),
-                tuple(disc))
+                self.biz_email.text(), self.biz_tax_id.text(), self.biz_footer.text())
+
+    def _tax_state(self):
+        return (self.biz_gct.value(), self.tax_currency.text().strip(),
+                self.tax_terminal.text().strip().upper())
+
+    def _chk_state(self):
+        return (self.biz_theme.currentData(), self.biz_quick_cash.text().strip())
+
+    def _perm_state(self):
+        return (self.perm_require_remove_auth.isChecked(), self.perm_session_gate.isChecked(),
+                self.perm_cart_qty_edit.isChecked())
+
+    def _stk_state(self):
+        return (self.perm_stock_tracking.isChecked(), self.perm_low_stock.isChecked(),
+                self.perm_low_stock_threshold.value())
+
+    def _grp_margins_state(self):
+        out = []
+        for r in range(self.groups_table.rowCount()):
+            n, m = self.groups_table.item(r, 0), self.groups_table.item(r, 1)
+            out.append((n.text() if n else "", m.text().strip() if m else ""))
+        return tuple(out)
+
+    def _grp_state(self):
+        disc = tuple((p.value(), q.value()) for p, q in getattr(self, "_disc_rows", []))
+        return (self._grp_margins_state(), disc, self.case_profit_spin.value())
 
     def _pg_state(self):
         return (self.pg_enabled.isChecked(), self.pg_host.text(), self.pg_port.value(),
                 self.pg_db.text(), self.pg_user.text(), self.pg_pass.text())
 
+    # (clean-baseline attribute, state method, name shown in the logout warning)
+    _SETTINGS_TRACKED = (
+        ("_biz_clean",  "_biz_state",  "Business Info"),
+        ("_tax_clean",  "_tax_state",  "Tax & Currency"),
+        ("_chk_clean",  "_chk_state",  "Checkout & Appearance"),
+        ("_cd_clean",   "_cd_state",   "Cash Drawer"),
+        ("_perm_clean", "_perm_state", "Permissions"),
+        ("_stk_clean",  "_stk_state",  "Stock Settings"),
+        ("_grp_clean",  "_grp_state",  "Groups & Discounts"),
+        ("_pg_clean",   "_pg_state",   "PostgreSQL"),
+    )
+
     def _unsaved_sections(self) -> list[str]:
         out = super()._unsaved_sections()
-        if hasattr(self, "biz_name") and hasattr(self, "_biz_clean") \
-                and self._biz_state() != self._biz_clean:
-            out.append("Business Info")
-        if hasattr(self, "pg_host") and hasattr(self, "_pg_clean") \
-                and self._pg_state() != self._pg_clean:
-            out.append("PostgreSQL")
+        for clean_attr, state_fn, label in self._SETTINGS_TRACKED:
+            if hasattr(self, clean_attr) and getattr(self, state_fn)() != getattr(self, clean_attr):
+                out.append(label)
         if self._lazy.is_built("receipt") and getattr(self._lazy.page("receipt"), "_dirty", False):
             out.append("Receipt")
+        if self._lazy.is_built("pickup") and self._lazy.page("pickup").is_dirty():
+            out.append("Pickup")
         if self._lazy.is_built("backup") and self._lazy.page("backup").is_dirty():
             out.append("Backup")
         return out
@@ -789,7 +845,6 @@ class ManagerWindow(SupervisorWindow):
                                 ("Address",       self.biz_address.toPlainText())):
                 if len(clean_lines(text)) > BUSINESS_TEXT_MAX:
                     raise ValueError(f"{label} is too long (the limit is {BUSINESS_TEXT_MAX} characters).")
-            quick_amounts = self._parse_quick_amounts(self.biz_quick_cash.text())
             update_business(name=self.biz_name.toPlainText(),
                             subtitle=self.biz_subtitle.text(),
                             address=self.biz_address.toPlainText(),
@@ -797,27 +852,69 @@ class ManagerWindow(SupervisorWindow):
                             email=self.biz_email.text().strip(),
                             tax_id=self.biz_tax_id.text().strip(),
                             receipt_footer=self.biz_footer.text().strip())
-            cfg_set("gct_rate", str(self.biz_gct.value() / 100))
-            cfg_set("theme", self.biz_theme.currentData())
-            cfg_set("checkout_quick_amounts", ",".join(f"{a:g}" for a in quick_amounts))
-            cfg_set("require_remove_auth", "1" if self.perm_require_remove_auth.isChecked() else "0")
-            cfg_set("session_gate",        "1" if self.perm_session_gate.isChecked()         else "0")
-            cfg_set("allow_cart_qty_edit",  "1" if self.perm_cart_qty_edit.isChecked()       else "0")
-            cfg_set("low_stock_warning",    "1" if self.perm_low_stock.isChecked()            else "0")
-            cfg_set("low_stock_threshold",  str(self.perm_low_stock_threshold.value()))
-            cfg_set("stock_tracking",       "1" if self.perm_stock_tracking.isChecked()       else "0")
-            self._save_discount_levels()
-            saved = get_business()                       # show it back as it is stored and will print
-            self.biz_name.setPlainText(saved.get("name", ""))
-            self.biz_subtitle.setText(saved.get("subtitle", ""))
-            self.biz_address.setPlainText(saved.get("address", ""))
-            self.biz_feedback.setStyleSheet(f"color:{GREEN};font-size:11px;font-weight:600;")
-            self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in quick_amounts))
+            self._biz_load()                      # show it back as it is stored and will print
             self._biz_clean = self._biz_state()
-            self.biz_feedback.setText("✓  Business info saved.")
+            self._flash("biz_feedback", "✓  Business info saved.")
         except Exception as e:
-            self.biz_feedback.setStyleSheet(f"color:{RED};font-size:11px;font-weight:600;")
-            self.biz_feedback.setText(str(e))
+            self._flash("biz_feedback", str(e), ok=False)
+
+    def _tax_save(self):
+        try:
+            currency = self.tax_currency.text().strip() or "$"
+            tid = self.tax_terminal.text().strip().upper()
+            if not tid:
+                raise ValueError("Terminal ID is required.")
+            if not tid.replace("-", "").isalnum():
+                raise ValueError("Terminal ID must contain only letters and numbers.")
+            if tid != get("terminal_id", "01").strip().upper():
+                reply = QMessageBox.question(
+                    self, "Change Terminal ID",
+                    f"Receipts from the next sale on will be numbered {tid}-0001, {tid}-0002 …\n"
+                    "Receipts already saved keep their old numbers.\n\n"
+                    "Every terminal must have its own ID. Change it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+            set_many({"gct_rate": str(self.biz_gct.value() / 100),
+                      "currency_symbol": currency,
+                      "terminal_id": tid})
+            self._tax_load()
+            self._tax_clean = self._tax_state()
+            self._flash("tax_feedback", "✓  Tax & currency saved.")
+        except Exception as e:
+            self._flash("tax_feedback", str(e), ok=False)
+
+    def _chk_save(self):
+        try:
+            quick = self._parse_quick_amounts(self.biz_quick_cash.text())
+            set_many({"theme": self.biz_theme.currentData(),
+                      "checkout_quick_amounts": ",".join(f"{a:g}" for a in quick)})
+            self.biz_quick_cash.setText(", ".join(f"{a:g}" for a in quick))
+            self._chk_clean = self._chk_state()
+            self._flash("chk_feedback", "✓  Checkout & appearance saved.")
+        except Exception as e:
+            self._flash("chk_feedback", str(e), ok=False)
+
+    def _perm_save(self):
+        try:
+            set_many({"require_remove_auth": "1" if self.perm_require_remove_auth.isChecked() else "0",
+                      "session_gate":        "1" if self.perm_session_gate.isChecked() else "0",
+                      "allow_cart_qty_edit": "1" if self.perm_cart_qty_edit.isChecked() else "0"})
+            self._perm_clean = self._perm_state()
+            self._flash("perm_feedback", "✓  Permissions saved.")
+        except Exception as e:
+            self._flash("perm_feedback", str(e), ok=False)
+
+    def _stk_save(self):
+        try:
+            set_many({"stock_tracking":      "1" if self.perm_stock_tracking.isChecked() else "0",
+                      "low_stock_warning":   "1" if self.perm_low_stock.isChecked() else "0",
+                      "low_stock_threshold": str(self.perm_low_stock_threshold.value())})
+            self._stk_clean = self._stk_state()
+            self._flash("stk_feedback", "✓  Stock settings saved.")
+        except Exception as e:
+            self._flash("stk_feedback", str(e), ok=False)
 
     def _load_discount_levels(self):
         """Load the first two discount_levels rows (by min_qty) into the
@@ -864,10 +961,18 @@ class ManagerWindow(SupervisorWindow):
             margin_item = QTableWidgetItem(f"{float(margin)*100:.1f}")
             self.groups_table.setItem(row, 1, margin_item)
 
+    def _reload_groups_keep_edits_state(self):
+        """Reload the groups table after an add/delete (which hit the database at once)
+        without hiding unsaved discount/case edits from the logout warning."""
+        self._load_groups()
+        old = getattr(self, "_grp_clean", None)
+        if old is not None:
+            self._grp_clean = (self._grp_margins_state(),) + tuple(old[1:])
+
     def _add_group(self):
         name = self.new_group_inp.text().strip()
         if not name: return
-        try: add_group(name); self.new_group_inp.clear(); self._load_groups()
+        try: add_group(name); self.new_group_inp.clear(); self._reload_groups_keep_edits_state()
         except Exception as e: QMessageBox.warning(self, "Error", str(e))
 
     def _delete_group(self):
@@ -878,7 +983,7 @@ class ManagerWindow(SupervisorWindow):
         reply = QMessageBox.question(self, "Delete Group", f"Delete group '{item.text()}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            delete_group(gid); self._load_groups()
+            delete_group(gid); self._reload_groups_keep_edits_state()
 
 
 

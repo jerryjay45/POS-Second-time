@@ -25,7 +25,7 @@ from core.db_products import (
     get_products, get_product_by_id, delete_product,
     count_products, recalculate_all_cases,
 )
-from core.db_users    import get_users, get_sessions, open_session, close_session, get_user_by_id, has_open_session
+from core.db_users    import get_users, get_sessions, open_session, close_session, get_user_by_id, has_open_session, get_session_by_id
 from core.db_checkout import (
     get_receipts, get_receipt_by_id, void_receipt, refund_receipt,
     session_totals, count_receipts,
@@ -112,59 +112,15 @@ class SupervisorWindow(BaseWindow):
             open_drawer_manual(dlg.authorized_user, parent=self)
 
     def _build_tabs(self):
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane{{background:{WARM_WHITE};border:none;}}
-            QTabBar::tab{{background:{WHITE};color:{LABEL_TEXT};border:none;
-            border-bottom:2px solid transparent;padding:10px 18px;
-            font-size:12px;font-weight:500;margin-right:2px;}}
-            QTabBar::tab:selected{{color:{DARK_CARD};border-bottom:2px solid {AMBER};font-weight:700;}}
-            QTabBar::tab:hover{{color:{DARK_CARD};}}
-        """)
-        # Tabs are built the first time they are opened (not all at once at
-        # login — that took ~1.5 s with a big catalog) and refreshed each time
-        # the user comes back to them. See ui/shared/lazy_tabs.py.
-        from ui.shared.lazy_tabs import LazyTabs
-        self._lazy = LazyTabs(self.tabs)
-        self._lazy.add("products", "📦  Products", self._build_products_tab,
-                       lambda: self._load_products(self._pg_search))
-        self._lazy.add("reports", "📊  Reports", self._build_reports_tab,
-                       self._rpt_refresh_on_show)
-        self._lazy.add("transactions", "🧾  Transactions", self._build_transactions_tab,
-                       lambda: self._tx_load(self._tx_pg_search, self._tx_pg_status))
-        # The old standalone void_refund_tab.py file was retired — its
-        # functionality is superseded by the inline void/refund section
-        # built into this window's own tab (see _vr_* methods below),
-        # which already implements the fixed reconciliation logic.
-        # NOTE: _build_void_tab() existed in the original codebase but was
-        # never actually added here — only reachable via the (now deleted)
-        # standalone file, and only from the Manager window. Supervisors
-        # had no void/refund access at all. Adding it here fixes that.
-        self._lazy.add("void", "↩  Void / Refund", self._build_void_tab,
-                       self._vr_refresh_on_show)
-        self._lazy.add("stock", "📊  Stock", self._build_stock_tab,
-                       lambda: self._lazy.page("stock")._refresh_all())
-        self._lazy.add("pricetags", "🏷  Price Tags", self._build_price_tag_tab,
-                       lambda: self._lazy.page("pricetags")._load_table())
-        # Quick Keys is a form of unsaved edits, so it has no refresher.
-        self._lazy.add("quickkeys", "⌨  Quick Keys", self._build_quickkeys_tab)
-        self._lazy.start(0)
-        return self.tabs
+        # Areas and pages come from ui/shared/tab_registry.py (filtered by role).
+        # Pages are built when first opened and refreshed on return; see lazy_tabs.py.
+        from ui.shared.tab_registry import build_role_tabs
+        return build_role_tabs(self, "supervisor")
 
     # ── refreshers used when a tab is shown again ───────────────────────
     def _rpt_refresh_on_show(self):
-        """Reload the selected cashier's sessions (live totals change as sales
-        happen) and re-select the session that was being viewed."""
-        sel = getattr(self, "_rpt_selected_session_id", None)
+        """Live totals change as sales happen: reload whatever is showing."""
         self._rpt_refresh()
-        if sel is None:
-            return
-        for r in range(self.rpt_session_list.rowCount()):
-            it = self.rpt_session_list.item(r, 0)
-            if it is not None and it.data(Qt.ItemDataRole.UserRole) == sel:
-                self.rpt_session_list.selectRow(r)
-                self._rpt_on_session_selected()
-                break
 
     def _vr_refresh_on_show(self):
         """Reload the receipt list — but not while a receipt is selected for
@@ -420,6 +376,10 @@ class SupervisorWindow(BaseWindow):
     # ================================================================
 
     def _build_reports_tab(self):
+        """Single-session shift report: cashier list on the left, the selected
+        cashier's current (or latest) session on the right. History… opens a
+        paged popup to look at an older session."""
+        from ui.shared.session_dashboard import SessionDashboard
         w = QWidget(); w.setStyleSheet(f"background:{WARM_WHITE};")
         lay = QHBoxLayout(w); lay.setContentsMargins(8,8,8,8); lay.setSpacing(8)
 
@@ -446,62 +406,51 @@ class SupervisorWindow(BaseWindow):
         self.rpt_cashier_list.selectionModel().selectionChanged.connect(self._rpt_on_cashier_selected)
         ll.addWidget(self.rpt_cashier_list, stretch=1)
 
-        # Right panel
+        # Right: header row + dashboard
         right = QFrame()
         right.setStyleSheet(f"background:{WHITE};border-radius:10px;border:1px solid {BORDER};")
         rl = QVBoxLayout(right); rl.setContentsMargins(12,12,12,12); rl.setSpacing(8)
 
-        # Summary cards
-        cards = QHBoxLayout(); cards.setSpacing(8)
-        self.rpt_cards = {}
-        for key, label, color in [
-            ("total_sales","TOTAL SALES",AMBER_TEXT_ON_LIGHT),("total_gct","TOTAL GCT",AMBER_TEXT_ON_LIGHT),
-            ("transactions","TRANSACTIONS",BLUE),("discounts","DISCOUNTS",GREEN),
-        ]:
-            card = QFrame()
-            card.setStyleSheet(f"background:{WARM_WHITE};border-radius:8px;border:1px solid {BORDER};")
-            cl = QVBoxLayout(card); cl.setContentsMargins(12,8,12,8); cl.setSpacing(2)
-            t = QLabel(label); t.setStyleSheet(f"color:{LABEL_TEXT};font-size:10px;font-weight:700;border:none;")
-            v = QLabel("—"); v.setStyleSheet(f"color:{color};font-size:22px;font-weight:700;border:none;")
-            cl.addWidget(t); cl.addWidget(v); self.rpt_cards[key] = v; cards.addWidget(card)
-        rl.addLayout(cards)
-
-        # Single action bar row
-        sb = QHBoxLayout(); sb.setSpacing(8)
+        hb = QHBoxLayout(); hb.setSpacing(8)
+        self.rpt_prev_btn = self._outline_btn("‹"); self.rpt_prev_btn.setFixedWidth(34)
+        self.rpt_next_btn = self._outline_btn("›"); self.rpt_next_btn.setFixedWidth(34)
+        self.rpt_prev_btn.setToolTip("Older session"); self.rpt_next_btn.setToolTip("Newer session")
+        self.rpt_prev_btn.clicked.connect(lambda: self._rpt_step(+1))
+        self.rpt_next_btn.clicked.connect(lambda: self._rpt_step(-1))
         self.rpt_session_header = QLabel("Select a cashier")
-        self.rpt_session_header.setStyleSheet(f"color:{LABEL_TEXT};font-size:12px;font-weight:600;border:none;")
-        self.rpt_search_bar = QLineEdit()
-        self.rpt_search_bar.setPlaceholderText("🔍  #0012  or  2024-06-01  or  2024-06-01 to 2024-06-30")
-        self.rpt_search_bar.setFixedHeight(30); self.rpt_search_bar.setFixedWidth(300)
-        self.rpt_search_bar.setStyleSheet(self._input_style())
-        self.rpt_search_bar.textChanged.connect(self._rpt_filter_sessions)
+        self.rpt_session_header.setStyleSheet(f"color:{DARK_CARD};font-size:13px;font-weight:700;border:none;")
+        self.rpt_back_btn = self._outline_btn("↩  Back to current")
+        self.rpt_back_btn.clicked.connect(self._rpt_back_to_current); self.rpt_back_btn.hide()
+        self.rpt_history_btn = self._outline_btn("🕘  History…")
+        self.rpt_history_btn.clicked.connect(self._rpt_open_history)
         self.rpt_refresh_btn = self._outline_btn("↻  Refresh"); self.rpt_refresh_btn.clicked.connect(self._rpt_refresh)
-        self.rpt_close_btn   = self._danger_btn("✕  Close"); self.rpt_close_btn.setEnabled(False); self.rpt_close_btn.clicked.connect(self._rpt_close_session)
-        self.rpt_open_btn    = self._success_btn("＋  Open"); self.rpt_open_btn.setEnabled(False); self.rpt_open_btn.clicked.connect(self._rpt_open_session)
-        self.rpt_print_btn   = self._outline_btn("🖨  Print"); self.rpt_print_btn.setEnabled(False); self.rpt_print_btn.clicked.connect(self._rpt_print_session)
-        sb.addWidget(self.rpt_session_header); sb.addStretch()
-        sb.addWidget(self.rpt_search_bar); sb.addWidget(self.rpt_refresh_btn)
-        sb.addWidget(self.rpt_close_btn); sb.addWidget(self.rpt_open_btn); sb.addWidget(self.rpt_print_btn)
-        rl.addLayout(sb)
+        self.rpt_close_btn   = self._danger_btn("✕  Close");  self.rpt_close_btn.clicked.connect(self._rpt_close_session)
+        self.rpt_open_btn    = self._success_btn("＋  Open"); self.rpt_open_btn.clicked.connect(self._rpt_open_session)
+        self.rpt_print_btn   = self._outline_btn("🖨  Print"); self.rpt_print_btn.clicked.connect(self._rpt_print_session)
+        # Opening float, count and variance (only shown when cash drawer tracking applies)
+        self.rpt_cash_btn    = self._outline_btn("💵  Cash"); self.rpt_cash_btn.clicked.connect(self._rpt_cash_dialog)
+        for wdg in (self.rpt_prev_btn, self.rpt_next_btn): hb.addWidget(wdg)
+        hb.addWidget(self.rpt_session_header); hb.addWidget(self.rpt_back_btn); hb.addStretch()
+        for wdg in (self.rpt_history_btn, self.rpt_refresh_btn, self.rpt_cash_btn, self.rpt_close_btn,
+                    self.rpt_open_btn, self.rpt_print_btn):
+            hb.addWidget(wdg)
+        rl.addLayout(hb)
 
-        self.rpt_session_list = QTableWidget(); self.rpt_session_list.setColumnCount(5)
-        self.rpt_session_list.setHorizontalHeaderLabels(["Session","Status","Opened","Closed","Sales"])
-        hh = self.rpt_session_list.horizontalHeader()
-        for c in range(5):
-            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
-        self.rpt_session_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.rpt_session_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.rpt_session_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.rpt_session_list.verticalHeader().setVisible(False)
-        self.rpt_session_list.setShowGrid(False)
-        self.rpt_session_list.setStyleSheet(self._table_style())
-        self.rpt_session_list.selectionModel().selectionChanged.connect(self._rpt_on_session_selected)
-        rl.addWidget(self.rpt_session_list, stretch=1)
-
+        self.rpt_dashboard = SessionDashboard()
+        rl.addWidget(self.rpt_dashboard, stretch=1)
         lay.addWidget(left); lay.addWidget(right, stretch=1)
-        self._rpt_all_cashiers=[]; self._rpt_all_sessions=[]; self._rpt_selected_cashier_id=None; self._rpt_selected_session_id=None
+
+        self._rpt_all_cashiers = []
+        self._rpt_selected_cashier_id = None
+        self._rpt_selected_session_id = None
+        self._rpt_viewing_history = False
+        self._rpt_token = 0
+        self._rpt_loader = None
+        self._rpt_update_buttons(None)
         self._rpt_load_cashiers()
         return w
+
+    # -- cashier list --------------------------------------------------------
 
     def _rpt_load_cashiers(self):
         from core.db_users import get_users
@@ -525,98 +474,99 @@ class SupervisorWindow(BaseWindow):
         item = self.rpt_cashier_list.item(row, 0)
         if not item: return
         self._rpt_selected_cashier_id = item.data(Qt.ItemDataRole.UserRole)
-        self.rpt_session_header.setText(f"Sessions — {item.text()}")
-        self.rpt_open_btn.setEnabled(True)
-        self._rpt_load_sessions(self._rpt_selected_cashier_id)
+        self._rpt_cashier_name = item.text()
+        self._rpt_viewing_history = False
+        self._rpt_show_session(self._rpt_current_session_id())
 
-    def _rpt_load_sessions(self, user_id):
-        sessions = get_sessions(user_id=user_id)
-        # Enrich each session with live totals from receipts DB
-        for s in sessions:
-            st = session_totals(s["id"])
-            s["_sales"] = st.get("total_sales", 0) or 0
-            s["_gct"]   = st.get("total_gct", 0) or 0
-            s["_txns"]  = st.get("transaction_count", 0) or 0
-            s["_disc"]  = st.get("total_discount", 0) or 0
-        self._rpt_all_sessions = sessions
-        self._rpt_fill_session_list(sessions)
-        self._rpt_clear_cards()
+    # -- which session is showing --------------------------------------------
 
-    def _rpt_clear_cards(self):
-        for key in self.rpt_cards:
-            self.rpt_cards[key].setText("—")
+    def _rpt_current_session_id(self):
+        """Open session if the cashier has one, otherwise their latest."""
+        from core.db_users import get_latest_session
+        s = get_latest_session(self._rpt_selected_cashier_id)
+        return s["id"] if s else None
 
-    def _rpt_fill_session_list(self, sessions):
-        self.rpt_session_list.setRowCount(0)
-        R = Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
-        for i, s in enumerate(sessions):
-            self.rpt_session_list.insertRow(i); self.rpt_session_list.setRowHeight(i, 38)
-            num = QTableWidgetItem(f"#{s['id']:04d}"); num.setData(Qt.ItemDataRole.UserRole, s["id"])
-            num.setForeground(QColor(DARK_CARD))
-            stat = QTableWidgetItem(s["status"].capitalize())
-            stat.setForeground(QColor(GREEN if s["status"]=="open" else MUTED))
-            opened = QTableWidgetItem(str(s["opened_at"])[:16])
-            opened.setForeground(QColor(DARK_CARD))
-            closed = QTableWidgetItem(str(s["closed_at"])[:16] if s["closed_at"] else "—")
-            closed.setForeground(QColor(DARK_CARD))
-            # Use live sales from enriched key, fallback to stored value
-            live_sales = s.get("_sales", s.get("total_sales", 0))
-            txns = s.get("_txns", 0)
-            sales = QTableWidgetItem(f"{format_currency(live_sales)}  ({txns} txns)")
-            sales.setForeground(QColor(AMBER_TEXT_ON_LIGHT)); sales.setTextAlignment(R)
-            for col, it in enumerate([num, stat, opened, closed, sales]):
-                self.rpt_session_list.setItem(i, col, it)
-
-    def _rpt_filter_sessions(self, text):
-        text = text.strip()
-        if not text:
-            self._rpt_fill_session_list(self._rpt_all_sessions)
-            self._rpt_clear_cards()
+    def _rpt_show_session(self, session_id):
+        """Point the dashboard at a session and load its numbers off-thread."""
+        from core.db_users import get_session_by_id
+        from ui.shared.session_dashboard import DashboardLoader
+        self._rpt_selected_session_id = session_id
+        session = get_session_by_id(session_id) if session_id else None
+        self._rpt_update_buttons(session)
+        if not session:
+            self.rpt_dashboard.clear()
             return
+        self._rpt_token += 1
+        loader = DashboardLoader(self._rpt_token, session_id, self)
+        loader.loaded.connect(self._rpt_on_loaded)
+        loader.failed.connect(lambda tok, msg: tok == self._rpt_token and self.rpt_dashboard.show_error(msg))
+        loader.finished.connect(loader.deleteLater)
+        self._rpt_loader = loader
+        loader.start()
 
-        # Date range: "2024-06-01 to 2024-06-30"
-        if " to " in text.lower():
-            parts = text.lower().split(" to ")
-            date_from = parts[0].strip()
-            date_to   = parts[1].strip() if len(parts) > 1 else ""
-            filtered = [
-                s for s in self._rpt_all_sessions
-                if str(s.get("opened_at", ""))[:10] >= date_from
-                and (not date_to or str(s.get("opened_at", ""))[:10] <= date_to)
-            ]
-        # Session number: "#0012" or "12"
-        elif text.startswith("#") or text.isdigit():
-            num = text.lstrip("#")
-            filtered = [s for s in self._rpt_all_sessions
-                        if num in f"{s['id']:04d}"]
-        # Single date or partial date: "2024-06"
-        else:
-            filtered = [s for s in self._rpt_all_sessions
-                        if text in str(s.get("opened_at", ""))]
+    def _rpt_on_loaded(self, token, session_id, data):
+        if token != self._rpt_token:      # a newer request replaced this one
+            return
+        self.rpt_dashboard.show_data(data)
 
-        self._rpt_fill_session_list(filtered)
-        self._rpt_clear_cards()
-
-    def _rpt_on_session_selected(self):
-        row = self.rpt_session_list.currentRow()
-        if row < 0: return
-        item = self.rpt_session_list.item(row, 0)
-        if not item: return
-        self._rpt_selected_session_id = item.data(Qt.ItemDataRole.UserRole)
-        stat = self.rpt_session_list.item(row, 1)
-        self.rpt_close_btn.setEnabled(bool(stat and stat.text().lower() == "open"))
-        self.rpt_print_btn.setEnabled(True)
-        # Update summary cards for the selected session
-        session = next((s for s in self._rpt_all_sessions
-                        if s["id"] == self._rpt_selected_session_id), None)
+    def _rpt_update_buttons(self, session):
+        has_cashier = self._rpt_selected_cashier_id is not None
+        is_open = bool(session and session["status"] == "open")
         if session:
-            self.rpt_cards["total_sales"].setText(f"{format_currency(session['_sales'])}")
-            self.rpt_cards["total_gct"].setText(f"{format_currency(session['_gct'])}")
-            self.rpt_cards["transactions"].setText(str(session["_txns"]))
-            self.rpt_cards["discounts"].setText(f"{format_currency(session['_disc'])}")
+            state = "Active" if is_open else "Closed"
+            color = GREEN if is_open else MUTED
+            pending = (not is_open and session.get("float_amount") is not None
+                       and session.get("counted_cash") is None)
+            self.rpt_session_header.setText(
+                f"Session #{session['id']:05d}  ·  <span style='color:{color}'>{state}</span>"
+                f"  ·  opened {str(session['opened_at'])[:16]}"
+                + ("  ·  <span style='color:#8a5510'>Count pending</span>" if pending else ""))
+        else:
+            self.rpt_session_header.setText(
+                "No sessions yet for this cashier" if has_cashier else "Select a cashier")
+        # Close only for an open session; Open only when the cashier has none.
+        self.rpt_close_btn.setVisible(is_open)
+        self.rpt_open_btn.setVisible(has_cashier and not is_open and not self._rpt_viewing_history)
+        self.rpt_print_btn.setEnabled(session is not None)
+        # Cash: for sessions that recorded a float, or any session while tracking is on (to set one)
+        from core.cash_drawer import enabled as cash_enabled
+        self.rpt_cash_btn.setVisible(bool(session) and (session.get("float_amount") is not None or cash_enabled()))
+        self.rpt_history_btn.setEnabled(has_cashier)
+        self.rpt_refresh_btn.setEnabled(has_cashier)
+        self.rpt_back_btn.setVisible(self._rpt_viewing_history)
+        self.rpt_prev_btn.setEnabled(session is not None)
+        self.rpt_next_btn.setEnabled(session is not None)
+
+    def _rpt_step(self, direction):
+        """direction +1 = older session, -1 = newer."""
+        from core.db_users import get_sessions_page
+        cur = self._rpt_selected_session_id
+        if not cur or self._rpt_selected_cashier_id is None: return
+        ids = [s["id"] for s in get_sessions_page(self._rpt_selected_cashier_id, 500)]
+        if cur not in ids: return
+        i = ids.index(cur) + direction
+        if 0 <= i < len(ids):
+            self._rpt_viewing_history = i != 0
+            self._rpt_show_session(ids[i])
+
+    def _rpt_open_history(self):
+        from ui.shared.session_dashboard import SessionHistoryDialog
+        if self._rpt_selected_cashier_id is None: return
+        dlg = SessionHistoryDialog(self._rpt_selected_cashier_id,
+                                   getattr(self, "_rpt_cashier_name", ""),
+                                   self._input_style(), self._table_style(), self)
+        if dlg.exec() and dlg.selected_id:
+            self._rpt_viewing_history = dlg.selected_id != self._rpt_current_session_id()
+            self._rpt_show_session(dlg.selected_id)
+
+    def _rpt_back_to_current(self):
+        self._rpt_viewing_history = False
+        self._rpt_show_session(self._rpt_current_session_id())
 
     def _rpt_refresh(self):
-        if self._rpt_selected_cashier_id: self._rpt_load_sessions(self._rpt_selected_cashier_id)
+        if self._rpt_selected_cashier_id is None: return
+        sid = self._rpt_selected_session_id if self._rpt_viewing_history else self._rpt_current_session_id()
+        self._rpt_show_session(sid)
 
     def _rpt_open_session(self):
         if not self._rpt_selected_cashier_id: return
@@ -626,7 +576,16 @@ class SupervisorWindow(BaseWindow):
                 "This cashier already has an open session.\n"
                 "Close it before opening a new one.")
             return
-        session_id = open_session(self._rpt_selected_cashier_id, opened_by=self.user["id"])
+        float_amount = None                      # None = the standard float (or none when tracking is off)
+        from core.cash_drawer import enabled as cash_enabled
+        if cash_enabled():
+            from ui.shared.cash_drawer_dialogs import OpenFloatDialog
+            dlg = OpenFloatDialog(self, getattr(self, "_rpt_cashier_name", ""))
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            float_amount = dlg.float_amount
+        session_id = open_session(self._rpt_selected_cashier_id, opened_by=self.user["id"],
+                                  float_amount=float_amount)
         # Broadcast so waiting cashier window can activate
         from PyQt6.QtWidgets import QApplication
         app = QApplication.instance()
@@ -652,7 +611,23 @@ class SupervisorWindow(BaseWindow):
             app = QApplication.instance()
             if hasattr(app, "session_closed"):
                 app.session_closed.emit(self._rpt_selected_session_id)
+            self._rpt_refresh()
+            # Cash drawer: the drawer is counted when the shift ends, so offer the count now.
+            # Closing the dialog leaves it pending; it can be entered later from the Cash button.
+            fresh = get_session_by_id(self._rpt_selected_session_id)
+            if fresh and fresh.get("float_amount") is not None:
+                self._rpt_cash_dialog(focus_count=True)
+            return
         self._rpt_refresh()
+
+    def _rpt_cash_dialog(self, _checked=False, focus_count=False):
+        """Float, count and variance for the session on screen."""
+        if not self._rpt_selected_session_id: return
+        from ui.shared.cash_drawer_dialogs import CashDrawerDialog
+        dlg = CashDrawerDialog(self, self._rpt_selected_session_id, self.user, focus_count=focus_count)
+        dlg.exec()
+        if dlg.changed:
+            self._rpt_refresh()
 
     def _rpt_print_session(self):
         if not self._rpt_selected_session_id: return
@@ -1386,6 +1361,8 @@ class SupervisorWindow(BaseWindow):
         out = []
         if hasattr(self, "_qk_clean") and self._qk_state() != self._qk_clean:
             out.append("Quick Keys")
+        if self._lazy.is_built("printersetup") and self._lazy.page("printersetup").is_dirty():
+            out.append("Printer Setup")
         return out
 
     def _qk_save(self):
@@ -1425,7 +1402,24 @@ class SupervisorWindow(BaseWindow):
             self.logout_requested.emit(); self.force_close()
 
     def _on_logout_confirmed(self):
-        """Hook for subclasses; runs once the user has confirmed logging out."""
+        """Runs once the user has confirmed logging out (manager and supervisor):
+        start a background backup if switched on."""
+        try:
+            from core import backup as bk
+            if bk.load_settings()["on_manager_logout"]:
+                bk.run_async("logout")
+        except Exception:
+            pass                       # a backup problem must never block logging out
+
+    def _build_printer_setup_tab(self):
+        from ui.shared.printer_setup_tab import PrinterSetupTab
+        return PrinterSetupTab(self)
+
+    def _build_backup_tab(self):
+        # Supervisors get the limited view (status, history, Back up now, Test);
+        # managers get everything. See BackupTab(limited=...).
+        from ui.manager.backup_tab import BackupTab
+        return BackupTab(self.user, limited=self.user.get("role") != "manager")
 
     # ================================================================
     # STYLE HELPERS

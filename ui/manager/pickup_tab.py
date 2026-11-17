@@ -159,6 +159,16 @@ class PickupTab(QWidget):
         self.cutter_cb.setChecked(s["pickup_has_cutter"] == "1")
         self.cols_edit.setText(s["pickup_columns"])
         self.feed_spin.setValue(PT._int(s["pickup_feed_lines"], 0, 20, 5))
+        self._clean = self._values()          # baseline for the unsaved-changes check
+
+    def is_dirty(self) -> bool:
+        return self._values() != self._clean
+
+    def reload_if_clean(self):
+        """Refresher: pick up changes made on the Printer Setup page, unless there are edits here."""
+        if not self.is_dirty():
+            self._refresh_queues()
+            self._load()
 
     def _values(self) -> dict[str, str]:
         return {
@@ -198,6 +208,7 @@ class PickupTab(QWidget):
             QMessageBox.warning(self, "Pickup printer", err)
             return False
         set_many(v)
+        self._clean = v
         self.status.setText("✓ Saved")
         return True
 
@@ -211,6 +222,7 @@ class PickupTab(QWidget):
             QMessageBox.warning(self, "Pickup printer", err)
             return
         set_many(v)                      # the test prints with what is on screen
+        self._clean = v
         try:
             from utils.print_manager import print_pickup
             print_pickup(PT.sample_receipt(), test=True)
