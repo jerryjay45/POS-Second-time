@@ -280,6 +280,8 @@ class SessionDashboard(QScrollArea):
         L.addWidget(_row("Cash sales", m(c["cash_sales"]), shaded=True))
         L.addWidget(_row("Cash refunds", m(-c["cash_refunds"]) if c["cash_refunds"] else m(0),
                          color=RED if c["cash_refunds"] else DARK_CARD))
+        if c.get("paid_outs"):
+            L.addWidget(_row("Paid out", m(-c["paid_outs"]), color=RED))
         L.addWidget(_row("Expected cash" + (" so far" if c["is_open"] else ""), m(c["expected"]),
                          bold=True, shaded=True))
         if c["counted"] is not None:
@@ -297,6 +299,8 @@ class SessionDashboard(QScrollArea):
             L.addWidget(_row("Counted cash", "Count pending", bold=True, color=AMBER_TEXT))
         else:
             L.addWidget(_row("Counted cash", "after the session closes", color=MUTED))
+        if c.get("no_sale_opens"):
+            L.addWidget(_row("No-sale drawer opens", str(c["no_sale_opens"]), color=MUTED))
 
     def show_error(self, msg: str):
         self.clear()

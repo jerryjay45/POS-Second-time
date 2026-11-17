@@ -76,6 +76,31 @@ CREATE TABLE IF NOT EXISTS session_cash_log (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user  ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_cashlog_session ON session_cash_log(session_id);
+
+-- Cash taken out of the drawer during a shift (buying ice, a delivery tip...).
+-- Never deleted: a manager can void one, which keeps who and when.
+CREATE TABLE IF NOT EXISTS session_paid_outs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    amount      REAL    NOT NULL CHECK(amount > 0),
+    reason      TEXT    NOT NULL,
+    recorded_by INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+    recorded_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    voided_by   INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+    voided_at   TEXT    DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_paidouts_session ON session_paid_outs(session_id);
+
+-- Every no-sale drawer open: who asked for it (user_id / session_id, when known)
+-- and which supervisor or manager authorised it.
+CREATE TABLE IF NOT EXISTS drawer_opens (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    INTEGER DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+    user_id       INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+    authorised_by INTEGER DEFAULT NULL REFERENCES users(id) ON DELETE SET NULL,
+    opened_at     TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_drawer_opens_session ON drawer_opens(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 """
 
@@ -366,6 +391,100 @@ def get_cash_log(session_id: int, limit: int = 20) -> list[dict]:
                WHERE l.session_id = ? ORDER BY l.id DESC LIMIT ?""", (session_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
+
+
+# ── Cash drawer: paid-outs and no-sale opens ──────────────────────────────────
+# Paid-outs: a supervisor or manager records one (amount + reason) while the session is open,
+# or after it closes until its count is entered (same window as the float). Only a manager
+# can void one, at any time; the row stays, marked with who voided it. A voided paid-out no
+# longer reduces expected cash.
+
+def add_paid_out(session_id: int, amount: float, reason: str, recorded_by: int) -> int:
+    amount = _clean_amount(amount)
+    if amount <= 0:
+        raise ValueError("Enter an amount greater than 0.")
+    reason = (reason or "").strip()[:120]
+    if not reason:
+        raise ValueError("Enter a reason for the paid-out.")
+    with _conn() as con:
+        if _role_of(con, recorded_by) not in ("supervisor", "manager"):
+            raise PermissionError("Only a supervisor or manager can record a paid-out.")
+        s = con.execute("SELECT status, float_amount, counted_cash FROM sessions WHERE id = ?",
+                        (session_id,)).fetchone()
+        if not s:
+            raise ValueError("That session no longer exists.")
+        if s["float_amount"] is None:
+            raise ValueError("This session has no float recorded, so paid-outs aren't tracked for it.")
+        if s["status"] != "open" and s["counted_cash"] is not None:
+            raise ValueError("The cash has already been counted for this session. A manager can "
+                             "correct the count instead.")
+        cur = con.execute("INSERT INTO session_paid_outs (session_id, amount, reason, recorded_by) "
+                          "VALUES (?, ?, ?, ?)", (session_id, amount, reason, recorded_by))
+        con.commit()
+        return cur.lastrowid
+
+
+def void_paid_out(paid_out_id: int, voided_by: int) -> None:
+    """Manager only. Keeps the row, marked voided, so the history stays complete."""
+    with _conn() as con:
+        if _role_of(con, voided_by) != "manager":
+            raise PermissionError("Only a manager can void a paid-out.")
+        row = con.execute("SELECT voided_at FROM session_paid_outs WHERE id = ?", (paid_out_id,)).fetchone()
+        if not row:
+            raise ValueError("That paid-out no longer exists.")
+        if row["voided_at"]:
+            return
+        con.execute("UPDATE session_paid_outs SET voided_by = ?, voided_at = datetime('now', 'localtime') "
+                    "WHERE id = ?", (voided_by, paid_out_id))
+        con.commit()
+
+
+def get_paid_outs(session_id: int, include_voided: bool = True) -> list[dict]:
+    """A session's paid-outs, newest first, with the names of who recorded / voided them."""
+    q = """SELECT p.id, p.amount, p.reason, p.recorded_at, p.voided_at,
+                  ru.full_name AS recorded_by_name, vu.full_name AS voided_by_name
+           FROM session_paid_outs p
+           LEFT JOIN users ru ON ru.id = p.recorded_by
+           LEFT JOIN users vu ON vu.id = p.voided_by
+           WHERE p.session_id = ?"""
+    if not include_voided:
+        q += " AND p.voided_at IS NULL"
+    with _conn() as con:
+        return [dict(r) for r in con.execute(q + " ORDER BY p.id DESC", (session_id,))]
+
+
+def paid_out_total(session_id: int) -> float:
+    with _conn() as con:
+        v = con.execute("SELECT COALESCE(SUM(amount), 0) FROM session_paid_outs "
+                        "WHERE session_id = ? AND voided_at IS NULL", (session_id,)).fetchone()[0]
+    return round(v or 0.0, 2)
+
+
+def log_drawer_open(authorised_by: int | None, user_id: int | None = None,
+                    session_id: int | None = None) -> None:
+    """Record a no-sale drawer open. Never raises: the drawer must open even if logging fails."""
+    try:
+        with _conn() as con:
+            con.execute("INSERT INTO drawer_opens (session_id, user_id, authorised_by) VALUES (?, ?, ?)",
+                        (session_id, user_id, authorised_by))
+            con.commit()
+    except Exception as e:
+        print(f"[db_users] could not log drawer open: {e}")
+
+
+def get_drawer_opens(session_id: int, limit: int = 20) -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            """SELECT d.opened_at, au.full_name AS authorised_by_name
+               FROM drawer_opens d LEFT JOIN users au ON au.id = d.authorised_by
+               WHERE d.session_id = ? ORDER BY d.id DESC LIMIT ?""", (session_id, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def count_drawer_opens(session_id: int) -> int:
+    with _conn() as con:
+        return con.execute("SELECT COUNT(*) FROM drawer_opens WHERE session_id = ?",
+                           (session_id,)).fetchone()[0]
 
 def get_session_by_id(session_id: int) -> dict | None:
     with _conn() as con:

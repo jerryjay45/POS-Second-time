@@ -1182,7 +1182,8 @@ class CashierWindow(BaseWindow):
         dlg = DrawerAuthDialog(parent=self)
         if dlg.exec():
             from utils.print_manager import open_drawer_manual
-            open_drawer_manual(dlg.authorized_user, parent=self)
+            open_drawer_manual(dlg.authorized_user, parent=self,
+                               user_id=self.user["id"], session_id=self._session_id)
 
     def _handle_checkout(self):
         if not self.cart: return

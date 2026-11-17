@@ -516,6 +516,8 @@ def _cash_drawer_section(c: dict, currency: str, w: int) -> list[Line]:
     lines.append((_right("Cash sales:", _cur(c["cash_sales"], currency), w), "normal"))
     if c["cash_refunds"]:
         lines.append((_right("Cash refunds:", _signed(-c["cash_refunds"], currency), w), "normal"))
+    if c.get("paid_outs"):
+        lines.append((_right("Paid out:", _signed(-c["paid_outs"], currency), w), "normal"))
     lines.append((_div(w, "-"), "div"))
     lines.append((_right("Expected cash:" if not c["is_open"] else "Expected so far:",
                          _cur(c["expected"], currency), w), "total"))
@@ -529,6 +531,8 @@ def _cash_drawer_section(c: dict, currency: str, w: int) -> list[Line]:
         lines.append((_right("Variance:", verdict, w), "total"))
         if c.get("counted_by"):
             lines += _right_rows("Counted by:", c["counted_by"], w)
+    if c.get("no_sale_opens"):
+        lines.append((_right("No-sale drawer opens:", str(c["no_sale_opens"]), w), "normal"))
     lines.append((_div(w), "div"))
     return lines
 

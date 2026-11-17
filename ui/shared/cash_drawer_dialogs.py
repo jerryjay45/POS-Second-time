@@ -23,6 +23,7 @@ from core.cash_drawer import session_cash_summary, standard_float
 from core.db_config import get as cfg_get
 from core.db_users import (
     get_session_by_id, set_session_float, set_session_count, get_cash_log,
+    add_paid_out, void_paid_out, get_paid_outs, get_drawer_opens,
 )
 from ui.shared.checkbox import make_checkbox
 from ui.shared.theme import (
@@ -198,6 +199,25 @@ class CashDrawerDialog(QDialog):
             f"padding:0 10px;font-size:12px;}}QLineEdit:focus{{border-color:{AMBER};}}")
         r.addWidget(self.note_edit)
 
+        # paid-outs
+        self.po_head = _label("Paid out of the drawer", size=11, bold=True, color=LABEL_TEXT)
+        r.addWidget(self.po_head)
+        self.po_form = QFrame(); self.po_form.setStyleSheet("QFrame{border:none;background:transparent;}")
+        pr = QHBoxLayout(self.po_form); pr.setContentsMargins(0, 0, 0, 0)
+        self.po_spin = _spin()
+        self.po_reason = QLineEdit(); self.po_reason.setPlaceholderText("Reason (required)")
+        self.po_reason.setMaxLength(120); self.po_reason.setFixedHeight(34)
+        self.po_reason.setStyleSheet(
+            f"QLineEdit{{background:{WHITE};color:{DARK_CARD};border:1px solid {BORDER};border-radius:7px;"
+            f"padding:0 10px;font-size:12px;}}QLineEdit:focus{{border-color:{AMBER};}}")
+        self.po_btn = _btn("Add paid-out"); self.po_btn.clicked.connect(self._save_paid_out)
+        pr.addWidget(self.po_spin); pr.addWidget(self.po_reason, stretch=1); pr.addWidget(self.po_btn)
+        r.addWidget(self.po_form)
+        self.po_box = QVBoxLayout(); self.po_box.setSpacing(2)
+        r.addLayout(self.po_box)
+        self.opens_lbl = _label("", size=11, color=LABEL_TEXT, wrap=True)
+        r.addWidget(self.opens_lbl)
+
         self.log_head = _label("Changes", size=11, bold=True, color=LABEL_TEXT)
         self.log_box = QVBoxLayout()
         self.log_box.setSpacing(2)
@@ -250,6 +270,8 @@ class CashDrawerDialog(QDialog):
             self._row("Cash sales", money(summary["cash_sales"]))
             self._row("Cash refunds", money(-summary["cash_refunds"]) if summary["cash_refunds"] else money(0),
                       color=RED if summary["cash_refunds"] else DARK_CARD)
+            if summary["paid_outs"]:
+                self._row("Paid out", money(-summary["paid_outs"]), color=RED)
             self._row("Expected cash" + (" so far" if is_open else ""), money(summary["expected"]), bold=True)
             if summary["counted"] is not None:
                 self._row("Counted cash", money(summary["counted"]), bold=True)
@@ -294,6 +316,38 @@ class CashDrawerDialog(QDialog):
             note = "Count the drawer and enter the total now, or come back later: it stays pending."
         self.count_note.setText(note)
 
+        # paid-outs: record while open, or after closing until counted (like the float)
+        can_po = (self._role in ("supervisor", "manager") and summary is not None
+                  and (is_open or counted is None))
+        self.po_form.setVisible(can_po)
+        paid = get_paid_outs(self._sid, include_voided=True) if summary is not None else []
+        self.po_head.setVisible(can_po or bool(paid))
+        self._clear(self.po_box)
+        for p in paid[:8]:
+            voided = bool(p["voided_at"])
+            row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
+            line = f"{str(p['recorded_at'])[5:16]} · {money(p['amount'])} · {p['reason']} · {p['recorded_by_name'] or '?'}"
+            if voided:
+                line += f" · VOIDED by {p['voided_by_name'] or '?'}"
+            lab = _label(line, size=11, color=MUTED if voided else LABEL_TEXT, wrap=True)
+            if voided:
+                lab.setStyleSheet(lab.styleSheet() + "text-decoration:line-through;")
+            row.addWidget(lab, stretch=1)
+            if not voided and self._role == "manager":
+                vb = _btn("Void"); vb.setFixedHeight(24)
+                vb.clicked.connect(lambda _=False, pid=p["id"]: self._void_paid_out(pid))
+                row.addWidget(vb)
+            host = QFrame(); host.setStyleSheet("QFrame{border:none;background:transparent;}")
+            host.setLayout(row); self.po_box.addWidget(host)
+
+        opens = get_drawer_opens(self._sid, limit=3)
+        n_opens = summary["no_sale_opens"] if summary else 0
+        self.opens_lbl.setVisible(bool(n_opens))
+        if n_opens:
+            last = opens[0]
+            self.opens_lbl.setText(f"No-sale drawer opens this session: {n_opens} · latest "
+                                   f"{str(last['opened_at'])[11:16]}, authorised by {last['authorised_by_name'] or '?'}")
+
         self._clear(self.log_box)
         log = get_cash_log(self._sid, limit=6)
         self.log_head.setVisible(bool(log))
@@ -323,3 +377,26 @@ class CashDrawerDialog(QDialog):
 
     def _save_count(self):
         self._save(set_session_count, self.count_spin.value())
+
+    def _save_paid_out(self):
+        try:
+            add_paid_out(self._sid, self.po_spin.value(), self.po_reason.text(), self._user["id"])
+        except (ValueError, PermissionError) as e:
+            QMessageBox.warning(self, "Cash drawer", str(e))
+            return
+        self.changed = True
+        self.po_spin.setValue(0); self.po_reason.clear()
+        self._refresh()
+
+    def _void_paid_out(self, paid_out_id: int):
+        if QMessageBox.question(self, "Void paid-out", "Void this paid-out? Expected cash goes back up by "
+                                "that amount, and the entry stays in the list as voided.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            void_paid_out(paid_out_id, self._user["id"])
+        except (ValueError, PermissionError) as e:
+            QMessageBox.warning(self, "Cash drawer", str(e))
+            return
+        self.changed = True
+        self._refresh()
