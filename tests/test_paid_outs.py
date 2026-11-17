@@ -185,3 +185,64 @@ class XReport(unittest.TestCase):
         self.assertIn("X-REPORT", text)
         self.assertIn("Safe drops:", text)
         self.assertIn("Expected so far:", text)
+
+
+class CountToggle(unittest.TestCase):
+    """Setup -> Cash Drawer -> 'Count the drawer when a session closes'."""
+
+    def setUp(self):
+        C.set_many({"cash_drawer_enabled": "1", "cash_drawer_float": "100", "cash_drawer_count_enabled": "1"})
+        self.cashier, self.sup, self.mgr = _user("cashier"), _user("supervisor"), _user("manager")
+        self.sid = U.open_session(self.cashier, opened_by=self.sup)
+
+    def tearDown(self):
+        C.set_many({"cash_drawer_count_enabled": "1"})
+
+    def summary(self):
+        return CD.session_cash_summary(U.get_session_by_id(self.sid))
+
+    def test_default_is_on_so_old_databases_behave_as_before(self):
+        self.assertTrue(CD.count_enabled())
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        self.assertTrue(self.summary()["pending"])
+
+    def test_off_means_nothing_pending_and_no_variance(self):
+        C.set_many({"cash_drawer_count_enabled": "0"})
+        U.add_paid_out(self.sid, 10, "ice", self.sup)
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        s = self.summary()
+        self.assertFalse(s["pending"])
+        self.assertFalse(s["count_on"])
+        self.assertIsNone(s["variance"])
+        self.assertEqual(s["expected"], 90)                 # float and paid-outs still work
+
+    def test_cannot_enter_a_new_count_while_off(self):
+        C.set_many({"cash_drawer_count_enabled": "0"})
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        with self.assertRaises(ValueError):
+            U.set_session_count(self.sid, 100, self.sup)
+
+    def test_existing_count_survives_and_a_manager_can_still_correct_it(self):
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        U.set_session_count(self.sid, 95, self.sup)
+        C.set_many({"cash_drawer_count_enabled": "0"})
+        s = self.summary()
+        self.assertEqual((s["counted"], s["variance"]), (95, -5))
+        U.set_session_count(self.sid, 100, self.mgr)         # correction of a saved count is still allowed
+        self.assertEqual(self.summary()["variance"], 0)
+
+    def test_turning_it_back_on_makes_uncounted_closed_sessions_pending_again(self):
+        C.set_many({"cash_drawer_count_enabled": "0"})
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        C.set_many({"cash_drawer_count_enabled": "1"})
+        self.assertTrue(self.summary()["pending"])
+        U.set_session_count(self.sid, 100, self.sup)
+
+    def test_z_report_drops_the_counted_line_when_off(self):
+        from utils import receipt_formatter as F
+        C.set_many({"cash_drawer_count_enabled": "0"})
+        U.close_session(self.sid, 0, closed_by=self.sup)
+        text = "\n".join(t for t, _k in F._cash_drawer_section(self.summary(), "$", 42))
+        self.assertIn("Expected cash:", text)
+        self.assertNotIn("Counted cash", text)
+        self.assertNotIn("PENDING", text)

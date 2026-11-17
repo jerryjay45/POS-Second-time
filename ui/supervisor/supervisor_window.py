@@ -515,8 +515,9 @@ class SupervisorWindow(BaseWindow):
         if session:
             state = "Active" if is_open else "Closed"
             color = GREEN if is_open else MUTED
+            from core.cash_drawer import count_enabled
             pending = (not is_open and session.get("float_amount") is not None
-                       and session.get("counted_cash") is None)
+                       and session.get("counted_cash") is None and count_enabled())
             self.rpt_session_header.setText(
                 f"Session #{session['id']:05d}  ·  <span style='color:{color}'>{state}</span>"
                 f"  ·  opened {str(session['opened_at'])[:16]}"
@@ -615,7 +616,8 @@ class SupervisorWindow(BaseWindow):
             # Cash drawer: the drawer is counted when the shift ends, so offer the count now.
             # Closing the dialog leaves it pending; it can be entered later from the Cash button.
             fresh = get_session_by_id(self._rpt_selected_session_id)
-            if fresh and fresh.get("float_amount") is not None:
+            from core.cash_drawer import count_enabled
+            if fresh and fresh.get("float_amount") is not None and count_enabled():
                 self._rpt_cash_dialog(focus_count=True)
             return
         self._rpt_refresh()

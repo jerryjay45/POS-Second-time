@@ -135,6 +135,7 @@ _DEFAULTS = {
     # Cash drawer (Setup -> Cash Drawer). Off = nothing cash-related is recorded or shown.
     "cash_drawer_enabled":   "0",          # track opening float, counted cash and variance per session
     "cash_drawer_float":     "0",          # standard float every new session starts with
+    "cash_drawer_count_enabled": "1",      # count the drawer when a session closes (off = no count prompt, no "count pending", no variance)
 }
 
 

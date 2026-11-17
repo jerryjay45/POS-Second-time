@@ -7,6 +7,9 @@ all agree:
     expected = opening float + cash sales - cash refunds - paid-outs - safe drops
     variance = counted cash  - expected          (negative = the drawer is short)
 
+Counting can be switched off (Setup -> Cash Drawer): then nothing is ever "pending" and no
+variance exists, but float, cash sales, refunds, paid-outs and expected cash all still work.
+
 Cash sales are what session_tender_summary() already reports (a split sale contributes only
 its cash part), so this matches the Reports dashboard's Cash line. Change given back to the
 customer is not subtracted: a sale's total is what stays in the drawer, not what was handed over.
@@ -20,6 +23,14 @@ from __future__ import annotations
 def enabled() -> bool:
     from core.db_config import get_bool
     return get_bool("cash_drawer_enabled", False)
+
+
+def count_enabled() -> bool:
+    """Whether the drawer is counted when a session closes (Setup -> Cash Drawer). Defaults to on,
+    so databases from before this setting existed behave as they always did. Only meaningful
+    while tracking itself is on."""
+    from core.db_config import get_bool
+    return enabled() and get_bool("cash_drawer_count_enabled", True)
 
 
 def standard_float() -> float:
@@ -65,5 +76,8 @@ def session_cash_summary(session: dict | None) -> dict | None:
         "counted_at":   session.get("counted_at") or "",
         "is_open":      session.get("status") == "open",
         # closed and not yet counted -> the dashboard shows "Count pending"
-        "pending":      session.get("status") == "closed" and counted is None,
+        "pending":      session.get("status") == "closed" and counted is None and count_enabled(),
+        # False = counting is switched off: no count prompt, no "pending", no variance for
+        # sessions that were never counted (an existing count is still shown).
+        "count_on":     count_enabled(),
     }

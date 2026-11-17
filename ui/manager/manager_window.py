@@ -383,6 +383,13 @@ class ManagerWindow(SupervisorWindow):
             "counts the drawer when the session closes, and the Reports tab and the Z-report show "
             "expected cash, counted cash and the variance. When off, none of this appears anywhere.")
         pb.addLayout(g)
+        self.cd_count, g = self._toggle_block(
+            "Count the drawer when a session closes",
+            "When on, closing a session asks for the counted cash, and the report shows the variance "
+            "(over or short). Turn it off to keep the float, paid-outs and expected cash without ever "
+            "counting: nothing shows as \"count pending\" and no variance is calculated. A count that was "
+            "already saved is kept.")
+        pb.addLayout(g)
         lay.addWidget(box)
         form = QFormLayout(); form.setSpacing(12)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -400,6 +407,7 @@ class ManagerWindow(SupervisorWindow):
             "session's float from the Cash button on the Reports tab, or enter it when opening the "
             "session by hand. Only a manager can correct a count once it is saved."))
         self.cd_enabled.toggled.connect(self.cd_float.setEnabled)
+        self.cd_enabled.toggled.connect(self.cd_count.setEnabled)
         page = self._settings_footer(scroll, fw, lay, "cd_feedback", "💾  Save Cash Drawer", self._cd_save)
         self._cd_load(); self._cd_clean = self._cd_state()
         return page
@@ -407,17 +415,20 @@ class ManagerWindow(SupervisorWindow):
     def _cd_load(self):
         self.cd_enabled.setChecked(get_bool("cash_drawer_enabled", False))
         self.cd_float.setValue(get_float("cash_drawer_float", 0.0))
+        self.cd_count.setChecked(get_bool("cash_drawer_count_enabled", True))
         self.cd_float.setEnabled(self.cd_enabled.isChecked())
+        self.cd_count.setEnabled(self.cd_enabled.isChecked())
 
     def _cd_state(self):
-        return (self.cd_enabled.isChecked(), round(self.cd_float.value(), 2))
+        return (self.cd_enabled.isChecked(), round(self.cd_float.value(), 2), self.cd_count.isChecked())
 
     def _cd_save(self):
         try:
             set_many({"cash_drawer_enabled": "1" if self.cd_enabled.isChecked() else "0",
-                      "cash_drawer_float": f"{self.cd_float.value():.2f}"})
+                      "cash_drawer_float": f"{self.cd_float.value():.2f}",
+                      "cash_drawer_count_enabled": "1" if self.cd_count.isChecked() else "0"})
             self._cd_clean = self._cd_state()
-            self._flash("cd_feedback", "✓  Cash drawer settings saved. New sessions use them.")
+            self._flash("cd_feedback", "✓  Cash drawer settings saved. The standard float applies to new sessions; the count setting applies now.")
         except Exception as e:
             self._flash("cd_feedback", str(e), ok=False)
 

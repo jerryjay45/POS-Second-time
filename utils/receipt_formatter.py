@@ -524,7 +524,8 @@ def _cash_drawer_section(c: dict, currency: str, w: int) -> list[Line]:
     lines.append((_right("Expected cash:" if not c["is_open"] else "Expected so far:",
                          _cur(c["expected"], currency), w), "total"))
     if c["counted"] is None:
-        lines.append((_right("Counted cash:", "PENDING" if c["pending"] else "-", w), "normal"))
+        if c.get("count_on", True):
+            lines.append((_right("Counted cash:", "PENDING" if c["pending"] else "-", w), "normal"))
     else:
         v = c["variance"]
         lines.append((_right("Counted cash:", _cur(c["counted"], currency), w), "normal"))

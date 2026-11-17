@@ -372,6 +372,10 @@ def set_session_count(session_id: int, counted: float, changed_by: int, note: st
             raise ValueError("Close the session before entering the cash count.")
         if s["float_amount"] is None:
             raise ValueError("This session has no float recorded, so there is no expected cash to compare with.")
+        if s["counted_cash"] is None:
+            from core.cash_drawer import count_enabled
+            if not count_enabled():
+                raise ValueError("Counting the drawer is turned off in Setup \u2192 Cash Drawer.")
         if s["counted_cash"] is not None and role != "manager":
             raise PermissionError("Only a manager can correct a saved count.")
         if s["counted_cash"] is not None and round(s["counted_cash"], 2) == counted:
